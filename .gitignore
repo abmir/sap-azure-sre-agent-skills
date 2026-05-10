@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Azure Functions
+local.settings.json
+.python_packages/
+
+# Secrets & customer-specific configs
+.env
+config/*.secret.yaml
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp
