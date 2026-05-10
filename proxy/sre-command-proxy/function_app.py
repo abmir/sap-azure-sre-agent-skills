@@ -33,7 +33,9 @@ ALLOWED_COMMANDS = {
     "landscape_host_config": {"script": "su - {sidadm} -c 'python /usr/sap/{sid}/HDB{instance}/exe/python_support/landscapeHostConfiguration.py' 2>&1 | head -20", "description": "HANA landscape config", "requires_sidadm": True},
 }
 
-SUB_ID = os.environ.get("SUBSCRIPTION_ID", "40050ff9-81f0-4654-9bd4-34551fe455df")
+SUB_ID = os.environ.get("SUBSCRIPTION_ID", "")
+if not SUB_ID:
+    raise ValueError("SUBSCRIPTION_ID app setting is required. Set it in Azure Function App Configuration.")
 
 def get_mi_token():
     """Get ARM bearer token via DefaultAzureCredential (handles App Service MI, IMDS, CLI)."""

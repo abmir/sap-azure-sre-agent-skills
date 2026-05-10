@@ -16,10 +16,10 @@
 
 set -euo pipefail
 
-# --- Defaults ---
-STORAGE_ACCOUNT="stsre3configs"
-CONTAINER="sap-configs"
-UMI_CLIENT_ID="ad2c931b-7562-4f86-a1a9-7775e3c6e4b1"
+# --- Defaults (override via environment variables or parameters) ---
+STORAGE_ACCOUNT="${SRE_STORAGE_ACCOUNT:?ERROR: Set SRE_STORAGE_ACCOUNT environment variable}"
+CONTAINER="${SRE_CONTAINER:-sap-configs}"
+UMI_CLIENT_ID="${SRE_UMI_CLIENT_ID:?ERROR: Set SRE_UMI_CLIENT_ID environment variable}"
 VM_NAME=$(hostname -s)
 TIMESTAMP=$(date +%Y-%m-%d_%H%M%S)
 DATE_DIR=$(date +%Y-%m-%d)

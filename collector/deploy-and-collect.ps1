@@ -23,8 +23,9 @@ $TargetVM      = "ab1vm"
 $ScriptName    = "collect-sap-configs.sh"
 $LocalScript   = Join-Path $PSScriptRoot $ScriptName
 $RemotePath    = "/opt/sre/$ScriptName"
-$StorageAccount = "stsre3configs"
-$Container      = "sap-configs"
+$StorageAccount = $env:SRE_STORAGE_ACCOUNT
+if (-not $StorageAccount) { throw "Set SRE_STORAGE_ACCOUNT environment variable" }
+$Container      = if ($env:SRE_CONTAINER) { $env:SRE_CONTAINER } else { "sap-configs" }
 
 # Get jumphost private IP for SSH proxy
 function Get-JumphostIP {

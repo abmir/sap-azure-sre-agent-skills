@@ -8,7 +8,9 @@ from azure.storage.blob import BlobServiceClient
 app = func.FunctionApp()
 
 # Configuration from environment
-STORAGE_ACCOUNT = os.environ.get("STORAGE_ACCOUNT_NAME", "stsre3configs")
+STORAGE_ACCOUNT = os.environ.get("STORAGE_ACCOUNT_NAME", "")
+if not STORAGE_ACCOUNT:
+    raise ValueError("STORAGE_ACCOUNT_NAME app setting is required.")
 CONTAINER = os.environ.get("CONTAINER_NAME", "sap-configs")
 ALLOWED_PRINCIPALS = os.environ.get("ALLOWED_PRINCIPALS", "").split(",")  # SRE agent MI principal IDs
 
