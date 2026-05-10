@@ -77,6 +77,8 @@ Azure SRE Agent skills for SAP workloads on Azure. 15 custom skills organized ac
 - Azure SRE Agent (created at sre.azure.com)
 - Two Azure Function Apps (config-proxy + command-proxy) deployed
 
+> **Full step-by-step setup:** See [docs/deployment-guide.md](docs/deployment-guide.md) for infrastructure setup, SAP VM collector, and agent configuration.
+
 ## Security Model
 
 - **Managed Identity (MI)** — all Azure API calls authenticate via the agent's MI
