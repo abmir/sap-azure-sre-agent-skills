@@ -1,0 +1,132 @@
+{
+  "environment": "MCAP",
+  "subscription": "Abbas Azure External Subscription",
+  "subscription_id": "40050ff9-81f0-4654-9bd4-34551fe455df",
+  "storage_account": "stsre3configs",
+  "container": "sap-configs",
+  "collector_identity_client_id": "ad2c931b-7562-4f86-a1a9-7775e3c6e4b1",
+  "collector_identity_name": "sre-config-collector",
+  "systems": [
+    {
+      "sid": "AB1",
+      "db_sid": "DB1",
+      "type": "single-host",
+      "resource_group": "RG_SAP_CUS_AB1",
+      "managed_rg": "mrg-AB1-48f3f2",
+      "description": "SAP S/4HANA single-host (DB + ASCS + App on one VM)",
+      "vms": [
+        {
+          "name": "AB1vm",
+          "roles": ["db", "ascs", "app"],
+          "hana_instance": "00",
+          "ascs_instance": "01",
+          "app_instance": "02"
+        }
+      ]
+    },
+    {
+      "sid": "AB2",
+      "db_sid": "AB2",
+      "type": "distributed",
+      "resource_group": "RG_SAP_AB2",
+      "managed_rg": "mrg-AB2-07d671",
+      "description": "SAP S/4HANA distributed (3-tier)",
+      "vms": [
+        {
+          "name": "ab2dbvm",
+          "roles": ["db"],
+          "hana_instance": "00"
+        },
+        {
+          "name": "ab2ascsvm",
+          "roles": ["ascs"],
+          "ascs_instance": "00"
+        },
+        {
+          "name": "ab2appvm0",
+          "roles": ["app"],
+          "app_instance": "00"
+        }
+      ]
+    },
+    {
+      "sid": "AB3",
+      "db_sid": "AB3",
+      "type": "distributed",
+      "resource_group": "RG_SAP_AB3",
+      "managed_rg": "mrg-AB3-f53640",
+      "description": "SAP S/4HANA distributed (3-tier)",
+      "vms": [
+        {
+          "name": "ab3dbvm",
+          "roles": ["db"],
+          "hana_instance": "00"
+        },
+        {
+          "name": "ab3ascsvm",
+          "roles": ["ascs"],
+          "ascs_instance": "00"
+        },
+        {
+          "name": "ab3appvm0",
+          "roles": ["app"],
+          "app_instance": "00"
+        }
+      ]
+    },
+    {
+      "sid": "HSO",
+      "db_sid": "HSO",
+      "type": "distributed-ha-scaleout",
+      "resource_group": "RG_SAP_CUS",
+      "description": "SAP HANA Scale-Out HA with SBD fencing (5 worker nodes + 3 SBD)",
+      "vms": [
+        {
+          "name": "vm01",
+          "roles": ["db"],
+          "hana_instance": "00",
+          "ha_role": "primary"
+        },
+        {
+          "name": "vm02",
+          "roles": ["db"],
+          "hana_instance": "00",
+          "ha_role": "secondary"
+        },
+        {
+          "name": "vm03",
+          "roles": ["db"],
+          "hana_instance": "00",
+          "ha_role": "worker"
+        },
+        {
+          "name": "vm04",
+          "roles": ["db"],
+          "hana_instance": "00",
+          "ha_role": "worker"
+        },
+        {
+          "name": "vm05",
+          "roles": ["db"],
+          "hana_instance": "00",
+          "ha_role": "standby"
+        },
+        {
+          "name": "sbdvm01",
+          "roles": ["sbd"],
+          "description": "SBD fencing node 1"
+        },
+        {
+          "name": "sbdvm02",
+          "roles": ["sbd"],
+          "description": "SBD fencing node 2"
+        },
+        {
+          "name": "sbdvm03",
+          "roles": ["sbd"],
+          "description": "SBD fencing node 3"
+        }
+      ]
+    }
+  ]
+}

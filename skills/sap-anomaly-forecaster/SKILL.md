@@ -1,0 +1,211 @@
+---
+name: sap-anomaly-forecaster
+description: "Trend analysis on HANA memory, disk utilization, CPU, and replication lag. Projects resource exhaustion via linear regression. When threshold crossed: sends approval card with recommended action. On approval: executes remediation via SAP Command Executor skill."
+tools:
+    - ExecutePythonCode
+    - GetCurrentUtcTime
+    - SearchMemory
+    - SearchIncidentKnowledge
+    - MCP-MSLearnDocs_microsoft_docs_search
+    - MCP-MSLearnDocs_microsoft_docs_fetch
+    - QueryLogAnalyticsByWorkspaceId
+    - QueryLogAnalyticsByResourceId
+    - GetMetricTimeSeriesElementsForAzureResource
+    - ListAvailableMetrics
+    - GetDimensionNames
+    - RunAzCliReadCommands
+    - GetArmResourceAsJson
+    - CreateScheduledMonitoringTask
+    - PlotAreaChartWithCorrelation
+    - PlotScatter
+    - PlotBarChart
+---
+
+## Environment Configuration
+
+All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, API keys, SAP landscape) are provided via the Team Onboarding instructions. The agent reads these from the onboarding context at runtime. Do not hardcode environment values in this skill.
+
+**Authentication**: Use the agent's built-in tools (RunAzCliReadCommands, GetArmResourceAsJson, QueryLogAnalyticsByWorkspaceId, GetMetricTimeSeriesElementsForAzureResource) for Azure API calls. These authenticate automatically via the agent's Managed Identity.
+
+## Tier: T3 — Predictive Prevention (Semi-Autonomous)
+
+## Mode Selection
+
+- **User asks** "Analyze memory trends for AB1" → On-demand analysis
+- **Scheduled** (every 6 hours via CreateScheduledMonitoringTask) → Continuous monitoring
+- **Threshold crossed** → Alert via Teams + recommend action + await approval
+
+## When to Use
+
+- "Is HANA running out of memory?"
+- "Predict when AB1 will hit disk capacity"
+- "Memory trend analysis for AB3"
+- "Any anomalies on HSO?"
+- "When will /hana/log fill up?"
+
+## Authentication
+
+```python
+import requests, json, math
+from datetime import datetime, timedelta, timezone
+
+# SUB_ID: Use subscription_id from Team Onboarding
+# AMS_WORKSPACE_ID: Use ams_workspace_id from Team Onboarding
+
+# PROXY_URL: Use config_proxy_url from Team Onboarding
+# PROXY_KEY: Use config_proxy_api_key from Team Onboarding
+
+# VM commands are executed via the SAP Command Executor skill (never directly)
+# When T3 mode needs to act on a recommendation, invoke SAP Command Executor
+
+def get_mi_token(resource):
+    resp = requests.get("http://169.254.169.254/metadata/identity/oauth2/token",
+        params={"api-version": "2019-08-01", "resource": resource},
+        headers={"Metadata": "true"}, timeout=10)
+    resp.raise_for_status()
+    return resp.json()["access_token"]
+
+def query_log_analytics(query, timespan_hours=168):
+    token = get_mi_token("https://api.loganalytics.io/")
+    now = datetime.now(timezone.utc)
+    start = (now - timedelta(hours=timespan_hours)).isoformat()
+    end = now.isoformat()
+    resp = requests.post(
+        f"https://api.loganalytics.io/v1/workspaces/{AMS_WORKSPACE_ID}/query",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        json={"query": query, "timespan": f"{start}/{end}"}, timeout=120)
+    resp.raise_for_status()
+    return resp.json()
+```
+
+## Forecasting Metrics
+
+| Metric | Source | Query Window | Alert Threshold |
+|--------|--------|-------------|-----------------|
+| HANA memory utilization | `SapHana_LoadHistory_CL` | 7 days | Projected OOM within 72h |
+| /hana/log utilization | Azure Monitor disk % or proxy `df` | 7 days | Projected full within 48h |
+| /hana/data utilization | Azure Monitor disk % | 7 days | Projected full within 72h |
+| Host CPU trend | `SapHana_LoadHistory_CL` | 7 days | Sustained >90% for 4h+ |
+| HSR replication lag | `SapHana_SystemReplication_CL` | 24h | Increasing trend (lag growing) |
+| MVCC version count | `SapHana_Mvcc_CL` | 24h | Monotonically increasing |
+
+## Trend Analysis — Linear Regression
+
+```python
+def linear_regression(data_points):
+    """Simple linear regression on (timestamp, value) pairs.
+    Returns slope, intercept, r_squared, and projected crossover time."""
+    n = len(data_points)
+    if n < 10:
+        return None  # Insufficient data
+
+    x = [p[0] for p in data_points]  # timestamps as epoch seconds
+    y = [p[1] for p in data_points]  # metric values
+
+    sum_x = sum(x)
+    sum_y = sum(y)
+    sum_xy = sum(xi * yi for xi, yi in zip(x, y))
+    sum_x2 = sum(xi ** 2 for xi in x)
+
+    denom = n * sum_x2 - sum_x ** 2
+    if denom == 0:
+        return None
+
+    slope = (n * sum_xy - sum_x * sum_y) / denom
+    intercept = (sum_y - slope * sum_x) / n
+
+    # R-squared
+    y_mean = sum_y / n
+    ss_res = sum((yi - (slope * xi + intercept)) ** 2 for xi, yi in zip(x, y))
+    ss_tot = sum((yi - y_mean) ** 2 for yi in y)
+    r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+
+    return {"slope": slope, "intercept": intercept, "r_squared": r_squared}
+
+def project_crossover(regression, threshold, current_time_epoch):
+    """Project when a metric will cross a threshold."""
+    if regression is None or regression["slope"] <= 0:
+        return None  # No upward trend
+    crossover_epoch = (threshold - regression["intercept"]) / regression["slope"]
+    hours_until = (crossover_epoch - current_time_epoch) / 3600
+    return hours_until if hours_until > 0 else None
+```
+
+## HANA Memory Trend Query
+
+```
+SapHana_LoadHistory_CL
+| where TimeGenerated > ago(7d)
+| where SID_s == "<SID>"
+| summarize avg_mem_pct = avg(MEMORY_USED_d / MEMORY_SIZE_d * 100) by bin(TimeGenerated, 1h)
+| order by TimeGenerated asc
+```
+
+## Action Recommendations
+
+| Projected Event | Time Horizon | Recommended Action | Auto-Executable |
+|----------------|-------------|-------------------|-----------------|
+| HANA OOM | <72h | Identify top memory consumers, recommend service restart | Yes (with approval) |
+| HANA OOM | <12h | Emergency: restart non-critical services | Yes (with approval) + P1 escalation |
+| /hana/log full | <48h | Trigger log backup + catalog cleanup | Yes (with approval) |
+| /hana/log full | <12h | Emergency log backup | Yes (via T4 Self-Healing) |
+| CPU sustained >90% | >4h | Identify top consumers, check for runaway queries | No (investigation) |
+| MVCC growing | >24h trend | Identify long-running transaction | No (investigation) |
+
+## T3 Approval Flow
+
+```python
+def recommend_action(metric, projection, system):
+    """Generate recommendation for approval."""
+    recommendation = {
+        "system": system,
+        "metric": metric,
+        "current_value": projection["current"],
+        "projected_threshold_hours": projection["hours_until"],
+        "recommended_action": projection["action"],
+        "risk_level": "LOW" if projection["hours_until"] > 48 else "MEDIUM",
+        "auto_executable": projection["auto_executable"]
+    }
+    # In production: send Teams Adaptive Card via Teams connector
+    # In demo: display in chat and ask for approval
+    return recommendation
+```
+
+## Output Format
+
+```
+SAP Anomaly Forecast — AB1
+
+📈 HANA Memory: 72% → trending +1.5%/day (R²=0.89)
+   Projected OOM: ~18 days (May 25)
+   Status: 🟡 WATCH (no immediate action needed)
+
+📈 /hana/log: 45% → stable (slope ≈ 0)
+   Status: 🟢 STABLE
+
+📈 CPU: 34% avg → stable
+   Status: 🟢 STABLE
+
+📈 MVCC versions: 45,000 → stable
+   Status: 🟢 STABLE
+
+No immediate actions required. Next check in 6 hours.
+```
+
+Or when threshold is crossed:
+```
+🔴 SAP Anomaly Alert — AB1
+
+📈 HANA Memory: 89% → trending +3.2%/day (R²=0.94)
+   Projected OOM: ~36 hours (May 9 15:00 UTC)
+
+   TOP MEMORY CONSUMERS:
+   1. indexserver: 28 GB (62% of allocated)
+   2. preprocessor: 4 GB (9%)
+   3. compileserver: 2 GB (4%)
+
+   RECOMMENDED ACTION: Restart preprocessor service (4 GB freed)
+   Risk: LOW (non-critical service, auto-restarts)
+
+   [Approve Restart] [Deny] [Show Full Analysis]
+```

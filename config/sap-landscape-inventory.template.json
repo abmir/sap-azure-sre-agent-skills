@@ -1,0 +1,56 @@
+{
+  "environment": "<environment-name>",
+  "subscription_id": "<subscription-id>",
+  "storage_account": "<config-storage-account-name>",
+  "description": "SAP landscape inventory — source of truth for all SRE Agent skills. Upload this file to the SRE Agent Knowledge Sources after filling in your systems.",
+  "how_to_generate": [
+    "Option 1: Fill this template manually based on your SAP landscape",
+    "Option 2: Ask the SRE Agent: 'Build SAP landscape inventory from Azure Resource Graph'",
+    "Option 3: Ask the SRE Agent: 'Import SAP landscape from CSV' and paste your data",
+    "Option 4: The config proxy registry endpoint returns this data automatically if the collector cron job is configured"
+  ],
+  "systems": [
+    {
+      "_comment": "Example — delete this entry and add your own systems",
+      "sid": "ECP",
+      "db_sid": "ECP",
+      "type": "distributed-ha",
+      "resource_group": "RG_SAP_ECP",
+      "managed_resource_group": "mrg-ECP-xxxxx",
+      "vms": [
+        {
+          "name": "ecpdb01",
+          "roles": ["db"],
+          "hana_instance": "00",
+          "ha_role": "primary"
+        },
+        {
+          "name": "ecpdb02",
+          "roles": ["db"],
+          "hana_instance": "00",
+          "ha_role": "secondary"
+        },
+        {
+          "name": "ecpascs01",
+          "roles": ["ascs"],
+          "ascs_instance": "01"
+        },
+        {
+          "name": "ecpers01",
+          "roles": ["ers"],
+          "ers_instance": "10"
+        },
+        {
+          "name": "ecpapp01",
+          "roles": ["app"],
+          "app_instance": "00"
+        },
+        {
+          "name": "ecpapp02",
+          "roles": ["app"],
+          "app_instance": "01"
+        }
+      ]
+    }
+  ]
+}

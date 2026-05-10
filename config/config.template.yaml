@@ -1,0 +1,97 @@
+# SAP Azure SRE Agent — Environment Configuration Template
+# 
+# This file is the source of truth for all environment-specific values.
+# Customer fills this in during initial setup.
+# Values from this file are pasted into the SRE Agent's Team Onboarding instructions.
+#
+# DO NOT commit this file with real values to a public repository.
+# Use config.<customer>.yaml for customer-specific values (e.g., config.kof.yaml).
+
+# ============================================
+# Environment Identity
+# ============================================
+environment_name: ""                    # e.g., "KOF-Production", "MCAP-Lab"
+subscription_id: ""                     # Azure subscription ID
+tenant_id: ""                           # Entra ID tenant ID
+
+# ============================================
+# Azure Monitor for SAP (AMS)
+# ============================================
+ams:
+  workspace_id: ""                      # Log Analytics workspace ID for AMS data
+  resource_group: ""                    # RG containing the AMS instance (e.g., "mrg-sapmon-abb")
+
+# ============================================
+# SRE Operations Proxy Functions
+# ============================================
+proxy:
+  config:
+    url: ""                             # Config proxy URL (e.g., "https://sap-config-proxy.azurewebsites.net/api")
+    api_key: ""                         # API key for config proxy (x-api-key header)
+    storage_account: ""                 # Storage account name for SAP configs (e.g., "stsreconfigscus")
+    container: "sap-configs"            # Blob container name (default: sap-configs)
+  command:
+    url: ""                             # Command proxy URL (e.g., "https://sap-command-proxy.azurewebsites.net/api")
+    api_key: ""                         # API key for command proxy (x-api-key header)
+
+# ============================================
+# SAP Landscape
+# ============================================
+# This section is also maintained in sap-landscape-inventory.json (Knowledge Base).
+# Keep both in sync.
+landscape:
+  systems:
+    # Example:
+    # - sid: ECP
+    #   db_sid: ECP
+    #   type: distributed-ha          # single-host | distributed | distributed-ha | scaleout-ha
+    #   resource_group: RG_SAP_ECP
+    #   managed_resource_group: mrg-ECP-xxxxx
+    #   vms:
+    #     - name: ecpdb01
+    #       roles: [db]
+    #       hana_instance: "00"
+    #     - name: ecpdb02
+    #       roles: [db]
+    #       hana_instance: "00"
+    #     - name: ecpascs01
+    #       roles: [ascs]
+    #       ascs_instance: "01"
+    #     - name: ecpapp01
+    #       roles: [app]
+    #       app_instance: "00"
+
+# ============================================
+# Operational Settings
+# ============================================
+operations:
+  auto_shutdown_utc: ""                 # Daily auto-shutdown time (e.g., "06:52") or "none"
+  alert_suppression_during_shutdown: true
+
+# ============================================
+# External Integrations (Optional)
+# ============================================
+# Set URL to enable. Leave empty to disable (agent falls back to Azure-native alternatives).
+integrations:
+  servicenow:
+    url: ""                             # e.g., "https://customer.service-now.com"
+    # api_key: stored in Key Vault, referenced via app setting
+  apm:
+    type: ""                            # "dynatrace" | "focusrun-grafana" | "appdynamics" | ""
+    url: ""                             # e.g., "https://customer.live.dynatrace.com"
+    # api_token: stored in Key Vault, referenced via app setting
+
+# ============================================
+# Agent Resource Group
+# ============================================
+agent:
+  resource_group: ""                    # RG containing the SRE agent resource (e.g., "RG_SAP_SRE_Agent")
+  managed_identity_name: ""            # UMI name (e.g., "sap-sre-agent-gbfldtblf3bp2")
+  # Note: The agent's MI client ID is determined automatically. Do not hardcode it.
+
+# ============================================
+# SRE Operations Resource Group
+# ============================================
+sre_ops:
+  resource_group: ""                    # RG containing proxy functions and storage (e.g., "RG_SRE_OPS")
+  managed_identity_name: ""            # UMI for proxy functions (e.g., "sre-ops-mi")

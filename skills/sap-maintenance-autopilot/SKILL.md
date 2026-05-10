@@ -1,0 +1,177 @@
+---
+name: sap-maintenance-autopilot
+description: "Handles Azure scheduled maintenance events autonomously. Detects VM reboot/redeploy events via Azure Scheduled Events API, initiates graceful SAP shutdown, triggers HSR takeover for HA systems, acknowledges event, monitors restart, and validates recovery. Zero-downtime maintenance."
+tools:
+    - ExecutePythonCode
+    - GetCurrentUtcTime
+    - SearchMemory
+    - SearchIncidentKnowledge
+    - MCP-MSLearnDocs_microsoft_docs_search
+    - MCP-MSLearnDocs_microsoft_docs_fetch
+    - GetArmResourceAsJson
+    - RunAzCliReadCommands
+    - GetActivityLogsSummary
+    - GetMetricTimeSeriesElementsForAzureResource
+    - QueryLogAnalyticsByWorkspaceId
+    - CreateScheduledMonitoringTask
+---
+
+## Environment Configuration
+
+All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, API keys, SAP landscape) are provided via the Team Onboarding instructions. The agent reads these from the onboarding context at runtime. Do not hardcode environment values in this skill.
+
+**Authentication**: Use the agent's built-in tools (RunAzCliReadCommands, GetArmResourceAsJson, QueryLogAnalyticsByWorkspaceId, GetMetricTimeSeriesElementsForAzureResource) for Azure API calls. These authenticate automatically via the agent's Managed Identity.
+
+## Tier: T4 — Autonomous Remediation
+
+## When to Use
+
+- Azure Scheduled Events API detects "Reboot" or "Redeploy" event
+- User asks: "Handle upcoming maintenance for AB1"
+- User asks: "Is there scheduled maintenance?"
+
+## Guardrails
+
+- **Only allowlisted actions**: `sap_stop_graceful`, `hdb_stop`, `hdb_start`, `sap_start`
+- **Token budget**: max 5K tokens per invocation
+- **Rate limit**: max 5 autonomous maintenance actions per day
+- **Kill switch**: disable via Application Settings `T4_ENABLED=false`
+- **Every action logged** to Application Insights + Teams notification within 60 seconds
+- **HA systems**: trigger takeover BEFORE acknowledging maintenance event
+
+## Authentication
+
+```python
+import requests, json
+from datetime import datetime, timezone
+
+# SUB_ID: Use subscription_id from Team Onboarding
+
+# All VM commands are executed via the SAP Command Executor skill
+# This skill determines WHAT to do, Command Executor does HOW
+
+# PROXY_URL: Use config_proxy_url from Team Onboarding
+# PROXY_KEY: Use config_proxy_api_key from Team Onboarding
+
+def get_mi_token(resource):
+    resp = requests.get("http://169.254.169.254/metadata/identity/oauth2/token",
+        params={"api-version": "2019-08-01", "resource": resource},
+        headers={"Metadata": "true"}, timeout=10)
+    resp.raise_for_status()
+    return resp.json()["access_token"]
+
+def arm_get(path, api_version="2023-09-01"):
+    token = get_mi_token("https://management.azure.com/")
+    url = f"https://management.azure.com{path}?api-version={api_version}"
+    resp = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=60)
+    resp.raise_for_status()
+    return resp.json()
+```
+
+**To execute VM commands**: Invoke the **SAP Command Executor** skill. Do NOT call the command proxy directly.
+
+Example invocations:
+- Stop SAP: invoke Command Executor with command_id=`sap_stop_graceful`, sidadm=`<sid>adm`, sid=`<SID>`
+- Stop HANA: invoke Command Executor with command_id=`hdb_stop`, sidadm=`<sid>adm`
+- Start HANA: invoke Command Executor with command_id=`hdb_start`, sidadm=`<sid>adm`
+- Start SAP: invoke Command Executor with command_id=`sap_start`, sidadm=`<sid>adm`, sid=`<SID>`
+- Cluster maintenance on: invoke Command Executor with command_id=`crm_maintenance_on`
+- Cluster maintenance off: invoke Command Executor with command_id=`crm_maintenance_off`
+
+## Step 1: Check for Scheduled Events
+
+The agent checks Azure Scheduled Events API via the SAP Command Executor skill:
+```python
+# Invoke SAP Command Executor with command_id="scheduled_events"
+# This reads http://169.254.169.254/metadata/scheduledevents on the VM
+def check_scheduled_events(vm_name, rg):
+    # Invoke SAP Command Executor skill
+    pass
+```
+
+Response format from Azure:
+```json
+{
+  "Events": [{
+    "EventId": "...",
+    "EventType": "Reboot",
+    "ResourceType": "VirtualMachine",
+    "Resources": ["AB1vm"],
+    "EventStatus": "Scheduled",
+    "NotBefore": "2026-05-09T03:00:00Z"
+  }]
+}
+```
+
+## Step 2: Determine System Type and Action
+
+```python
+def determine_maintenance_action(vm_name, event_type, landscape):
+    """Determine the correct maintenance sequence based on system type."""
+    system = find_system_for_vm(vm_name, landscape)
+
+    if system["ha_type"] == "none":
+        # Non-HA: graceful stop, let Azure reboot, auto-start after
+        return {
+            "pre_actions": ["sap_stop_graceful", "hdb_stop"],
+            "post_actions": ["hdb_start", "sap_start"],
+            "takeover": False
+        }
+    elif system["ha_type"] in ("distributed-ha", "scaleout-ha"):
+        # HA: check if this VM is primary, trigger takeover to secondary
+        return {
+            "pre_actions": ["sap_stop_graceful", "hdb_stop"],
+            "post_actions": ["hdb_start", "sap_start"],
+            "takeover": True,
+            "takeover_target": system["secondary_vm"]
+        }
+```
+
+## Step 3: Execute Graceful Shutdown
+
+For non-HA (AB1, AB3):
+1. Stop SAP: Invoke Command Executor with command_id=`sap_stop_graceful`, sidadm=`ab1adm`, sid=`AB1`
+2. Stop HANA: Invoke Command Executor with command_id=`hdb_stop`, sidadm=`db1adm`
+3. Acknowledge event to Azure (starts countdown)
+4. Wait for reboot to complete (monitor VM power state via ARM)
+5. Start HANA: Invoke Command Executor with command_id=`hdb_start`, sidadm=`db1adm`
+6. Start SAP: Invoke Command Executor with command_id=`sap_start`, sidadm=`ab1adm`, sid=`AB1`
+7. Validate: check process list, HANA availability
+
+For HA (HSO):
+1. Verify HSR is in sync (query AMS)
+2. Set maintenance mode: Invoke Command Executor with command_id=`crm_maintenance_on`
+3. Stop SAP on target node
+4. Stop HANA on target node (triggers automatic takeover to secondary)
+5. Acknowledge event
+6. After reboot: start HANA, re-register as secondary
+7. Bring node online: Invoke Command Executor with command_id=`crm_maintenance_off`
+
+## Step 4: Post-Maintenance Validation
+
+1. Check VM power state = Running
+2. Check HANA availability via AMS
+3. Check SAP process list via command proxy
+4. For HA: check HSR replication re-established
+5. Run Configuration Guardian (T1 mode) to detect any drift
+
+## Step 5: Notification
+
+Send Teams notification with full action log:
+```
+✅ SAP Maintenance Autopilot — AB1
+
+Azure scheduled maintenance handled automatically:
+  03:00  Scheduled Event detected: Reboot on AB1vm (NotBefore: 03:15)
+  03:01  SAP graceful shutdown initiated (AB1)
+  03:02  HANA graceful shutdown initiated (DB1)
+  03:03  Maintenance event acknowledged
+  03:15  VM rebooted by Azure
+  03:17  VM back online
+  03:18  HANA started successfully (7 services GREEN)
+  03:19  SAP started successfully (all processes GREEN)
+  03:20  Config validation: 59/59 PASS (no drift)
+
+Total downtime: 2 minutes (03:15 - 03:17)
+Without autopilot: estimated 15-30 minutes unplanned downtime
+```
