@@ -86,7 +86,12 @@ This matters for **AAU (Agent Activity Unit) cost optimization**: most user quer
 ├── proxy/                           # Azure Function proxy code
 │   ├── sre-config-proxy/
 │   └── sre-command-proxy/
-└── docs/                            # Architecture and strategy docs
+├── collector/                       # SAP VM config collector + cron setup
+│   ├── collect-sap-configs.sh
+│   └── deploy-and-collect.ps1
+├── infra/                           # Automated infrastructure deployment
+│   └── deploy-sre-infra.ps1
+└── docs/                            # Architecture, strategy, deployment guide
 ```
 
 ## Prerequisites

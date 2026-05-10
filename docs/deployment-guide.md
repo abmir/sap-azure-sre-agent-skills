@@ -2,6 +2,8 @@
 
 Step-by-step guide to deploy the SAP SRE Agent in your Azure environment. Estimated time: **2–3 hours**.
 
+> **Prefer automation?** Run `infra/deploy-sre-infra.ps1` to deploy all Azure infrastructure (Phase 1) in a single command. See [Automated Deployment](#automated-deployment) at the bottom of this guide.
+
 ---
 
 ## Overview
@@ -569,3 +571,36 @@ Run these test prompts in the SRE Agent chat to verify each layer:
 - **Allowlisted commands only.** The command proxy has a hardcoded allowlist of 14 read-only commands. No arbitrary script execution.
 - **API key per agent.** Each SRE Agent instance gets its own `AGENT_KEY_*` app setting. Rotate by updating the app setting.
 - **Minimum RBAC.** UMI gets only Reader, Blob Reader/Contributor, and a custom VM Run Command role — no Contributor on the subscription.
+
+---
+
+## Automated Deployment
+
+Instead of running Phase 1 step-by-step, use the automation script to deploy all Azure infrastructure in one command:
+
+```powershell
+.\infra\deploy-sre-infra.ps1 `
+    -SubscriptionId "12345678-1234-1234-1234-123456789012" `
+    -Location "centralus" `
+    -SreResourceGroup "RG_SRE_OPS" `
+    -StorageAccountName "stsreconfigs001" `
+    -VNetName "VNET_SAP" `
+    -VNetResourceGroup "RG_Network" `
+    -IntegrationSubnet "IntegrationSubnet" `
+    -IntegrationSubnetCidr "10.40.1.0/26" `
+    -SapResourceGroups "RG_SAP_ECP,RG_SAP_QAS"
+```
+
+This creates everything from Phase 1 (Steps 1.1 through 1.10):
+- Resource group, storage account (firewall Deny, no shared key)
+- Managed identity with RBAC (Blob Reader + Contributor + VM Run Command)
+- Integration subnet with storage service endpoint
+- Both function apps (config-proxy + command-proxy) with app settings, VNet integration, AlwaysOn
+- Custom VM Run Command role assigned on all SAP resource groups
+- Generated API key for agent authentication
+
+The script is **idempotent** — safe to re-run if any step fails. It skips resources that already exist.
+
+After the script completes, continue with:
+- **Phase 2** (SAP VM collectors) — still manual per-VM
+- **Phase 3** (SRE Agent setup) — still manual via portal
