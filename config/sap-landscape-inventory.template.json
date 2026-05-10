@@ -15,6 +15,7 @@
       "sid": "ECP",
       "db_sid": "ECP",
       "type": "distributed-ha",
+      "criticality": "production",
       "resource_group": "RG_SAP_ECP",
       "managed_resource_group": "mrg-ECP-xxxxx",
       "vms": [

@@ -27,6 +27,10 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 **Authentication**: Use the agent's built-in tools (RunAzCliReadCommands, GetArmResourceAsJson, QueryLogAnalyticsByWorkspaceId, GetMetricTimeSeriesElementsForAzureResource) for Azure API calls. These authenticate automatically via the agent's Managed Identity.
 
+**Data Reuse (AAU Optimization)**: Before calling any API or proxy, check if the data was already retrieved earlier in this conversation. Reuse landscape registry, VM power states, config files, and AMS query results from context. Do not re-fetch data that is already available.
+
+**Proxy Fallback**: If the config proxy or command proxy returns an error (timeout, 5xx, unreachable), inform the user and continue with Azure-native data sources only (AMS, ARM API, Azure Monitor). Do not block the entire skill on a proxy failure.
+
 ## When to Use
 
 - "Why is SAP slow on AB1?"
@@ -121,6 +125,21 @@ def get_vm_configs(sid, hostname):
 | STR-008 | fstab mount options | Config proxy | nofail, nobarrier for data |
 | STR-009 | ANF volume throughput | Azure Monitor (ANF) | provisioned vs consumed |
 | STR-010 | Data freshness | Config proxy last-modified | <24h GREEN, >48h RED |
+
+## Query Optimization
+
+**Batch HANA checks into a single KQL query** to minimize AAU consumption and latency. Instead of running separate queries for CPU, memory, SQL probe, availability, and alerts, combine them:
+
+```kql
+// Single query covering PERF-H01 through PERF-H06
+let cpu_mem = SapHana_LoadHistory_CL | where TimeGenerated > ago(4h) | summarize avg_cpu=avg(host_cpu_d), avg_mem=avg(host_memory_resident_d), max_cpu=max(host_cpu_d), max_mem=max(host_memory_resident_d) by HOST_s;
+let sql_probe = SapHana_SqlProbe_CL | where TimeGenerated > ago(4h) | summarize avg_latency=avg(latency_d), max_latency=max(latency_d) by HOST_s;
+let availability = SapHana_SystemAvailability_CL | where TimeGenerated > ago(4h) | summarize arg_max(TimeGenerated, *) by HOST_s;
+let alerts = SapHana_Alerts_CL | where TimeGenerated > ago(4h) and alert_rating_s in ("HIGH", "ERROR") | summarize alert_count=count() by HOST_s;
+cpu_mem | join kind=leftouter sql_probe on HOST_s | join kind=leftouter availability on HOST_s | join kind=leftouter alerts on HOST_s
+```
+
+Run HANA checks (H01-H06) as one query, MVCC checks (H09-H10) as a second, and Storage checks via Azure Monitor metrics API. This reduces 3-5 KQL queries to 2.
 
 ## Output Format
 

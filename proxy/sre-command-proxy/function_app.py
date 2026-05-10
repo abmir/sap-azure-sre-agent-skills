@@ -3,6 +3,7 @@ import logging
 import json
 import os
 import re
+import shlex
 import requests
 from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
 
@@ -124,12 +125,15 @@ def diagnostics(req):
         results["arm_api"] = {"status": "FAIL", "error": str(e)}
     # Test 3: VM existence
     try:
-        vm = req.params.get("vm", "AB1vm")
-        rg = req.params.get("rg", "RG_SAP_CUS_AB1")
-        t3 = time.time()
-        r = requests.get(f"https://management.azure.com/subscriptions/{SUB_ID}/resourceGroups/{rg}/providers/Microsoft.Compute/virtualMachines/{vm}?api-version=2024-03-01",
-            headers={"Authorization": f"Bearer {token}"}, timeout=30)
-        results["vm_check"] = {"status": "OK" if r.status_code == 200 else f"HTTP {r.status_code}", "time_ms": int((time.time()-t3)*1000), "vm": vm}
+        vm = req.params.get("vm", "")
+        rg = req.params.get("rg", "")
+        if not vm or not rg:
+            results["vm_check"] = {"status": "SKIP", "error": "Provide ?vm=<name>&rg=<rg> to test VM access"}
+        else:
+            t3 = time.time()
+            r = requests.get(f"https://management.azure.com/subscriptions/{SUB_ID}/resourceGroups/{rg}/providers/Microsoft.Compute/virtualMachines/{vm}?api-version=2024-03-01",
+                headers={"Authorization": f"Bearer {token}"}, timeout=30)
+            results["vm_check"] = {"status": "OK" if r.status_code == 200 else f"HTTP {r.status_code}", "time_ms": int((time.time()-t3)*1000), "vm": vm}
     except Exception as e:
         results["vm_check"] = {"status": "FAIL", "error": str(e)}
     return func.HttpResponse(json.dumps(results, indent=2), mimetype="application/json")
@@ -161,7 +165,7 @@ def execute_command(req):
     if err:
         return func.HttpResponse(json.dumps({"error": err}), status_code=400, mimetype="application/json")
 
-    script = cmd["script"].replace("{sidadm}", sidadm).replace("{instance}", instance).replace("{sid}", sid)
+    script = cmd["script"].replace("{sidadm}", shlex.quote(sidadm)).replace("{instance}", shlex.quote(instance)).replace("{sid}", shlex.quote(sid))
 
     try:
         import time

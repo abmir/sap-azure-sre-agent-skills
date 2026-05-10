@@ -2,6 +2,7 @@ import azure.functions as func
 import logging
 import json
 import os
+import re
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient
 
@@ -61,7 +62,7 @@ def get_registry(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(data, mimetype="application/json", status_code=200)
     except Exception as e:
         logging.error(f"Failed to read registry: {e}")
-        return func.HttpResponse(json.dumps({"error": str(e)}), status_code=500, mimetype="application/json")
+        return func.HttpResponse(json.dumps({"error": "Failed to read registry"}), status_code=500, mimetype="application/json")
 
 
 @app.route(route="config/{sid}/{hostname}/{*filepath}", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
@@ -80,6 +81,23 @@ def get_config_file(req: func.HttpRequest) -> func.HttpResponse:
             status_code=400, mimetype="application/json"
         )
 
+    # Validate path components to prevent directory traversal
+    if not re.match(r'^[a-zA-Z0-9_.-]+$', sid) or not re.match(r'^[a-zA-Z0-9_.-]+$', hostname):
+        return func.HttpResponse(
+            json.dumps({"error": "Invalid sid or hostname"}),
+            status_code=400, mimetype="application/json"
+        )
+    if '..' in filepath or filepath.startswith('/'):
+        return func.HttpResponse(
+            json.dumps({"error": "Invalid filepath"}),
+            status_code=400, mimetype="application/json"
+        )
+    if not re.match(r'^[a-zA-Z0-9/_.\-]+$', filepath):
+        return func.HttpResponse(
+            json.dumps({"error": "Invalid filepath characters"}),
+            status_code=400, mimetype="application/json"
+        )
+
     blob_path = f"{sid}/{hostname}/latest/{filepath}"
     try:
         blob_client = container_client.get_blob_client(blob_path)
@@ -89,7 +107,7 @@ def get_config_file(req: func.HttpRequest) -> func.HttpResponse:
         if "BlobNotFound" in str(e) or "404" in str(e):
             return func.HttpResponse("", status_code=404)
         logging.error(f"Failed to read {blob_path}: {e}")
-        return func.HttpResponse(json.dumps({"error": str(e)}), status_code=500, mimetype="application/json")
+        return func.HttpResponse(json.dumps({"error": "Failed to read config file"}), status_code=500, mimetype="application/json")
 
 
 @app.route(route="configs/{sid}/{hostname}", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)

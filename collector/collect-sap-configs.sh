@@ -21,6 +21,10 @@ STORAGE_ACCOUNT="${SRE_STORAGE_ACCOUNT:?ERROR: Set SRE_STORAGE_ACCOUNT environme
 CONTAINER="${SRE_CONTAINER:-sap-configs}"
 UMI_CLIENT_ID="${SRE_UMI_CLIENT_ID:?ERROR: Set SRE_UMI_CLIENT_ID environment variable}"
 VM_NAME=$(hostname -s)
+if [ -z "$VM_NAME" ]; then
+    echo "ERROR: hostname returned empty"
+    exit 1
+fi
 TIMESTAMP=$(date +%Y-%m-%d_%H%M%S)
 DATE_DIR=$(date +%Y-%m-%d)
 LOG_FILE="/var/log/sre-config-collect.log"
@@ -131,13 +135,13 @@ if has_role "db" && [ -n "$DB_SID" ]; then
 
     # hdbuserstore keys (connection config — no passwords exposed)
     if command -v hdbuserstore &>/dev/null; then
-        hdbuserstore list > "${COLLECT_DIR}/hana/hdbuserstore-list.txt" 2>/dev/null || log "  WARN: hdbuserstore list failed"
+        timeout 15 hdbuserstore list > "${COLLECT_DIR}/hana/hdbuserstore-list.txt" 2>/dev/null || log "  WARN: hdbuserstore list failed or timed out"
         log "  OK: hdbuserstore list"
     fi
 
     # HANA landscape info
     if [ -n "$HANA_INSTANCE" ]; then
-        su - ${DB_SID,,}adm -c "python /usr/sap/${DB_SID}/HDB${HANA_INSTANCE}/exe/python_support/landscapeHostConfiguration.py" > "${COLLECT_DIR}/hana/landscape-host-config.txt" 2>/dev/null || log "  WARN: landscapeHostConfiguration failed"
+        timeout 15 su - ${DB_SID,,}adm -c "python /usr/sap/${DB_SID}/HDB${HANA_INSTANCE}/exe/python_support/landscapeHostConfiguration.py" > "${COLLECT_DIR}/hana/landscape-host-config.txt" 2>/dev/null || log "  WARN: landscapeHostConfiguration failed or timed out"
     fi
 
     # Cluster configs (relevant for DB HA)
@@ -147,17 +151,17 @@ if has_role "db" && [ -n "$DB_SID" ]; then
     collect_file "/etc/sysconfig/sbd" "cluster"
 
     if command -v crm &>/dev/null; then
-        crm configure show > "${COLLECT_DIR}/cluster/crm-config.txt" 2>/dev/null || log "  WARN: crm configure show failed"
-        crm status > "${COLLECT_DIR}/cluster/crm-status.txt" 2>/dev/null || true
+        timeout 15 crm configure show > "${COLLECT_DIR}/cluster/crm-config.txt" 2>/dev/null || log "  WARN: crm configure show failed or timed out"
+        timeout 15 crm status > "${COLLECT_DIR}/cluster/crm-status.txt" 2>/dev/null || true
         log "  OK: crm configure/status"
     elif command -v pcs &>/dev/null; then
-        pcs config show > "${COLLECT_DIR}/cluster/pcs-config.txt" 2>/dev/null || log "  WARN: pcs config show failed"
-        pcs status > "${COLLECT_DIR}/cluster/pcs-status.txt" 2>/dev/null || true
+        timeout 15 pcs config show > "${COLLECT_DIR}/cluster/pcs-config.txt" 2>/dev/null || log "  WARN: pcs config show failed or timed out"
+        timeout 15 pcs status > "${COLLECT_DIR}/cluster/pcs-status.txt" 2>/dev/null || true
         log "  OK: pcs config/status"
     fi
 
     if command -v SAPHanaSR-showAttr &>/dev/null; then
-        SAPHanaSR-showAttr > "${COLLECT_DIR}/cluster/saphanasr-showattr.txt" 2>/dev/null || log "  WARN: SAPHanaSR-showAttr failed"
+        timeout 15 SAPHanaSR-showAttr > "${COLLECT_DIR}/cluster/saphanasr-showattr.txt" 2>/dev/null || log "  WARN: SAPHanaSR-showAttr failed or timed out"
         log "  OK: SAPHanaSR-showAttr"
     fi
 
@@ -166,7 +170,7 @@ if has_role "db" && [ -n "$DB_SID" ]; then
 
     # Corosync quorum status
     if command -v corosync-quorumtool &>/dev/null; then
-        corosync-quorumtool -s > "${COLLECT_DIR}/cluster/corosync-quorum.txt" 2>/dev/null || log "  WARN: corosync-quorumtool failed"
+        timeout 10 corosync-quorumtool -s > "${COLLECT_DIR}/cluster/corosync-quorum.txt" 2>/dev/null || log "  WARN: corosync-quorumtool failed or timed out"
         log "  OK: corosync-quorumtool"
     fi
 
@@ -214,8 +218,8 @@ if has_role "ascs" && [ -n "$SAP_SID" ]; then
         collect_file "/etc/corosync/corosync.conf" "cluster"
         collect_file "/etc/sysconfig/sbd" "cluster"
         if command -v crm &>/dev/null; then
-            crm configure show > "${COLLECT_DIR}/cluster/crm-config.txt" 2>/dev/null || true
-            crm status > "${COLLECT_DIR}/cluster/crm-status.txt" 2>/dev/null || true
+            timeout 15 crm configure show > "${COLLECT_DIR}/cluster/crm-config.txt" 2>/dev/null || true
+            timeout 15 crm status > "${COLLECT_DIR}/cluster/crm-status.txt" 2>/dev/null || true
         fi
     fi
 fi
