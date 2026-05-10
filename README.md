@@ -2,6 +2,21 @@
 
 Azure SRE Agent skills for SAP workloads on Azure. 15 custom skills organized across 4 operational tiers: **Observe, Diagnose, Prevent, Heal**.
 
+## Why Tiers?
+
+Traditional monitoring tools generate alerts — but alerts alone don't fix problems. The tier model progressively increases agent autonomy while maintaining human control:
+
+```
+T1  Observe & Inform     →  "What's happening?"      Agent reads, reports, never changes anything
+T2  Diagnose & Explain   →  "Why did it break?"      Agent correlates logs, metrics, events into RCA
+T3  Predict & Prevent    →  "What's about to break?" Agent detects drift/trends, recommends fix, WAITS for approval
+T4  Act & Heal           →  "Fix it now"             Agent executes guardrailed actions in time-critical scenarios
+```
+
+**Key design principle:** T1 and T2 are always safe (read-only). T3 requires human approval before any change. T4 runs autonomously but is rate-limited (e.g., max 5 actions/day) and restricted to a hardcoded allowlist of safe operations.
+
+This matters for **AAU (Agent Activity Unit) cost optimization**: most user queries are T1 (4–6 API calls, ~500 tokens). Only incident investigations (T2) or remediation workflows (T3/T4) consume more. A well-tuned agent spends 80% of its AAU budget on T1 observability queries.
+
 ## Quick Start
 
 1. **Fork this repo** to your organization
