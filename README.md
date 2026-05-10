@@ -5,12 +5,16 @@ Azure SRE Agent skills for SAP workloads on Azure. 15 custom skills organized ac
 ## Quick Start
 
 1. **Fork this repo** to your organization
-2. **Fill in** `config/config.template.yaml` → save as `config/config.<your-org>.yaml`
-3. **Create an Azure SRE Agent** at [sre.azure.com](https://sre.azure.com)
-4. **Upload skills** from `skills/` folder to the agent's Skill Builder
-5. **Paste onboarding** from `onboarding/team-onboarding.template.md` into Team Onboarding (replace placeholders with your config values)
-6. **Upload** `sap-landscape-inventory.json` to Knowledge Sources
-7. **Deploy proxy functions** from `proxy/` folder to your Azure subscription
+2. **Deploy infrastructure** — follow [docs/deployment-guide.md](docs/deployment-guide.md) (storage, function apps, managed identity, RBAC)
+3. **Fill in** `config/config.template.yaml` → save as `config/config.<your-org>.yaml`
+4. **Fill in** `config/sap-landscape-inventory.template.json` → save as `config/sap-landscape-inventory.json`
+5. **Set up SAP VM collectors** — deploy `collector/collect-sap-configs.sh` + cron job on each SAP VM
+6. **Create an Azure SRE Agent** at [sre.azure.com](https://sre.azure.com)
+7. **Connect Knowledge Sources** — add this GitHub repo as a Knowledge Source (agent reads configs, inventory, and docs automatically)
+8. **Upload skills** — upload each `SKILL.md` from `skills/` to the agent's **Skill Builder** (one-time manual step, 15 skills)
+9. **Configure Team Onboarding** — fill in `onboarding/team-onboarding.template.md` with your config values and paste into the agent's Team Onboarding
+
+> **Knowledge Sources vs Skills:** The agent reads reference data (inventory, configs, docs) automatically from the connected repo. Skills define agent *behavior* and must be uploaded individually via Skill Builder.
 
 ## Skill Catalog
 

@@ -447,9 +447,23 @@ az role assignment create `
     --scope "/subscriptions/$SUB_ID/resourceGroups/$AMS_RG/providers/Microsoft.OperationalInsights/workspaces/$AMS_WORKSPACE"
 ```
 
-### Step 3.5 — Upload Skills
+### Step 3.5 — Connect Knowledge Sources
 
-In the SRE Agent portal, go to **Skill Builder** and upload each file from the `skills/` folder:
+The agent reads reference data (configs, inventory, docs) automatically from connected sources.
+
+1. In the agent portal, go to **Knowledge Sources**
+2. **Connect this GitHub repo** — the agent will index and read files like `sap-landscape-inventory.json`, config files, and documentation directly from the repo
+3. Alternatively, if repo connection is unavailable, upload these files manually:
+   - `config/sap-landscape-inventory.json` — your filled-in SAP landscape
+   - `docs/deployment-guide.md` — architecture reference
+
+> **Why connect the repo?** When you update the landscape inventory or config files in Git, the agent picks up changes automatically — no manual re-upload needed.
+
+### Step 3.6 — Upload Skills (One-Time Manual Step)
+
+Skills define agent *behavior* (what it can do, what tools it calls, how it reasons). These must be uploaded individually via **Skill Builder** — the agent does not auto-discover them from the repo.
+
+In the SRE Agent portal, go to **Skill Builder** and create a new skill for each file:
 
 | # | Skill File | Skill Name |
 |---|-----------|------------|
@@ -469,18 +483,15 @@ In the SRE Agent portal, go to **Skill Builder** and upload each file from the `
 | 14 | `skills/sap-servicenow-connector/SKILL.md` | SAP ServiceNow Connector |
 | 15 | `skills/sap-apm-connector/SKILL.md` | SAP APM Connector |
 
-### Step 3.6 — Configure Team Onboarding
+For each skill: create a new skill in Skill Builder → paste the content of the SKILL.md file → save.
+
+> **Tip:** Skills only need to be uploaded once. After initial setup, you update them in the portal if behavior changes — the repo copy serves as the source-of-truth for version control.
+
+### Step 3.7 — Configure Team Onboarding
 
 1. Open `onboarding/team-onboarding.template.md`
 2. Replace all `{{placeholder}}` values with your values from `config.<your-org>.yaml`
 3. Paste the completed content into the agent's **Team Onboarding** section
-
-### Step 3.7 — Upload Knowledge Sources
-
-Upload these files to the agent's **Knowledge Sources**:
-
-- `config/sap-landscape-inventory.json` — your filled-in SAP landscape
-- Optionally: this GitHub repo as a connected Knowledge Source
 
 ---
 
