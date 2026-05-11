@@ -394,6 +394,29 @@ cat /etc/cron.d/sre-collector
 tail -50 /var/log/sre-config-collect.log
 ```
 
+### Alternative: Deploy Collector via SRE Agent (No SSH Required)
+
+Instead of SSH-based deployment (Steps 2.1–2.7), you can deploy the collector remotely through the SRE Agent after Phase 3 is complete.
+
+**Prerequisites:**
+1. Upload the collector script to blob storage:
+   ```powershell
+   az storage blob upload --account-name $STORAGE_NAME --container-name $CONTAINER_NAME `
+       --name scripts/collect-sap-configs.sh --file collector/collect-sap-configs.sh --auth-mode login
+   ```
+2. Assign UMI to each SAP VM and grant Storage Blob Data Contributor (Step 2.3)
+
+**Then ask the SRE Agent:**
+> "Deploy the config collector to all SAP VMs"
+
+The agent reads the landscape inventory, calls the command proxy's `deploy_collector` command for each VM, which:
+- Downloads the collector script from blob storage to `/opt/sre/`
+- Creates the environment file (`/opt/sre/sre.env`)
+- Creates the cron wrapper with VM-specific SID/roles/instance parameters
+- Installs the weekly cron job and logrotate config
+
+This eliminates the need to SSH to each SAP VM individually.
+
 ---
 
 ## Phase 3: SRE Agent Setup

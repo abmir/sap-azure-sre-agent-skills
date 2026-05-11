@@ -32,6 +32,7 @@ ALLOWED_COMMANDS = {
     "os_release": {"script": "cat /etc/os-release 2>&1", "description": "OS version", "requires_sidadm": False},
     "sapcontrol_getinstancelist": {"script": "su - {sidadm} -c 'sapcontrol -nr {instance} -function GetSystemInstanceList' 2>&1", "description": "SAP instance list", "requires_sidadm": True},
     "landscape_host_config": {"script": "su - {sidadm} -c 'python /usr/sap/{sid}/HDB{instance}/exe/python_support/landscapeHostConfiguration.py' 2>&1 | head -20", "description": "HANA landscape config", "requires_sidadm": True},
+    "deploy_collector": {"script": "__SPECIAL__", "description": "Deploy config collector script and cron job to this VM (one-time setup)", "requires_sidadm": False},
 }
 
 SUB_ID = os.environ.get("SUBSCRIPTION_ID", "")
@@ -58,6 +59,93 @@ def validate_input(vm, rg, sidadm, instance):
     if sidadm and not re.match(r'^[a-z][a-z0-9]{2}adm$', sidadm): return f"Invalid sidadm: {sidadm}"
     if instance and not re.match(r'^[0-9]{2}$', instance): return f"Invalid instance: {instance}"
     return ""
+
+def build_deploy_collector_script(body):
+    """Build a shell script that deploys the config collector and cron job to a SAP VM.
+    Required body params: storage_account, umi_client_id, sid, roles
+    Optional: db_sid, hana_inst, ascs_inst, app_inst, container (default: sap-configs)"""
+    storage = body.get("storage_account", "").strip()
+    umi_cid = body.get("umi_client_id", "").strip()
+    sid = body.get("sid", "").strip().upper()
+    db_sid = body.get("db_sid", "").strip().upper() or sid
+    roles = body.get("roles", "").strip()
+    hana_inst = body.get("hana_inst", "").strip()
+    ascs_inst = body.get("ascs_inst", "").strip()
+    app_inst = body.get("app_inst", "").strip()
+    container = body.get("container", "sap-configs").strip()
+
+    if not all([storage, umi_cid, roles]):
+        return None, "deploy_collector requires: storage_account, umi_client_id, roles"
+    if roles != "sbd" and not sid:
+        return None, "deploy_collector requires: sid (unless roles=sbd)"
+
+    # Validate inputs
+    for name, val in [("storage_account", storage), ("umi_client_id", umi_cid), ("sid", sid), ("roles", roles)]:
+        if val and not re.match(r'^[a-zA-Z0-9_,\-]+$', val):
+            return None, f"Invalid characters in {name}"
+
+    # Build cron args
+    cron_args = f"--sid {shlex.quote(sid)} --db-sid {shlex.quote(db_sid)} --roles {shlex.quote(roles)}"
+    if hana_inst: cron_args += f" --hana-inst {shlex.quote(hana_inst)}"
+    if ascs_inst: cron_args += f" --ascs-inst {shlex.quote(ascs_inst)}"
+    if app_inst: cron_args += f" --app-inst {shlex.quote(app_inst)}"
+
+    script = f"""#!/bin/bash
+set -euo pipefail
+
+# --- Deploy SRE Config Collector ---
+echo "Creating /opt/sre directory..."
+mkdir -p /opt/sre
+
+# Download collector script from blob storage
+echo "Downloading collector script..."
+az login --identity --username {shlex.quote(umi_cid)} --output none 2>/dev/null
+az storage blob download \\
+    --account-name {shlex.quote(storage)} \\
+    --container-name {shlex.quote(container)} \\
+    --name scripts/collect-sap-configs.sh \\
+    --file /opt/sre/collect-sap-configs.sh \\
+    --auth-mode login --output none 2>/dev/null
+chmod +x /opt/sre/collect-sap-configs.sh
+
+# Create environment file
+cat > /opt/sre/sre.env << 'ENVEOF'
+SRE_STORAGE_ACCOUNT="{storage}"
+SRE_CONTAINER="{container}"
+SRE_UMI_CLIENT_ID="{umi_cid}"
+ENVEOF
+chmod 600 /opt/sre/sre.env
+
+# Create cron wrapper
+cat > /opt/sre/run-collector.sh << 'CRONEOF'
+#!/bin/bash
+source /opt/sre/sre.env
+/opt/sre/collect-sap-configs.sh {cron_args} >> /var/log/sre-config-collect.log 2>&1
+CRONEOF
+chmod +x /opt/sre/run-collector.sh
+
+# Install cron (weekly Sunday 2:00 AM)
+echo "0 2 * * 0 root /opt/sre/run-collector.sh" > /etc/cron.d/sre-collector
+chmod 644 /etc/cron.d/sre-collector
+
+# Install logrotate
+cat > /etc/logrotate.d/sre-config-collect << 'LREOF'
+/var/log/sre-config-collect.log {{
+    weekly
+    rotate 12
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 root root
+}}
+LREOF
+
+echo "SUCCESS: Collector deployed. Cron set for Sunday 2:00 AM."
+echo "Files: /opt/sre/collect-sap-configs.sh, /opt/sre/sre.env, /opt/sre/run-collector.sh"
+echo "Cron: /etc/cron.d/sre-collector | Log: /var/log/sre-config-collect.log"
+"""
+    return script, None
 
 def parse_run_command_output(data):
     """Parse stdout/stderr from ARM runCommand response.
@@ -172,7 +260,13 @@ def execute_command(req):
     if err:
         return func.HttpResponse(json.dumps({"error": err}), status_code=400, mimetype="application/json")
 
-    script = cmd["script"].replace("{sidadm}", shlex.quote(sidadm)).replace("{instance}", shlex.quote(instance)).replace("{sid}", shlex.quote(sid))
+    # Special handling for deploy_collector (multi-line script built from body params)
+    if command_id == "deploy_collector":
+        script, build_err = build_deploy_collector_script(body)
+        if build_err:
+            return func.HttpResponse(json.dumps({"error": build_err}), status_code=400, mimetype="application/json")
+    else:
+        script = cmd["script"].replace("{sidadm}", shlex.quote(sidadm)).replace("{instance}", shlex.quote(instance)).replace("{sid}", shlex.quote(sid))
 
     # Structured audit log — captured by Application Insights
     logging.info(json.dumps({
