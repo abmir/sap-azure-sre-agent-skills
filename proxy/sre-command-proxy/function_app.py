@@ -46,11 +46,11 @@ def get_mi_token():
 def validate_caller(req):
     api_key = req.headers.get("x-api-key", "") or req.params.get("code", "")
     if not api_key:
-        return False
+        return False, None
     for key, value in os.environ.items():
         if key.startswith("AGENT_KEY_") and value == api_key:
-            return True
-    return False
+            return True, key.replace("AGENT_KEY_", "")
+    return False, None
 
 def validate_input(vm, rg, sidadm, instance):
     if not re.match(r'^[a-zA-Z0-9\-_]{1,64}$', vm): return f"Invalid VM: {vm}"
@@ -95,7 +95,8 @@ def parse_run_command_output(data):
 
 @app.route(route="commands", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def list_commands(req):
-    if not validate_caller(req):
+    valid, caller = validate_caller(req)
+    if not valid:
         return func.HttpResponse(json.dumps({"error": "Unauthorized"}), status_code=401, mimetype="application/json")
     cmds = {k: {"description": v["description"], "requires_sidadm": v["requires_sidadm"]} for k, v in ALLOWED_COMMANDS.items()}
     return func.HttpResponse(json.dumps({"commands": cmds, "count": len(cmds)}, indent=2), mimetype="application/json")
@@ -103,7 +104,8 @@ def list_commands(req):
 @app.route(route="diag", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def diagnostics(req):
     """Diagnostic endpoint to test MI token and ARM connectivity."""
-    if not validate_caller(req):
+    valid, caller = validate_caller(req)
+    if not valid:
         return func.HttpResponse(json.dumps({"error": "Unauthorized"}), status_code=401, mimetype="application/json")
     import time
     results = {}
@@ -140,7 +142,8 @@ def diagnostics(req):
 
 @app.route(route="command", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
 def execute_command(req):
-    if not validate_caller(req):
+    valid, caller = validate_caller(req)
+    if not valid:
         return func.HttpResponse(json.dumps({"error": "Unauthorized"}), status_code=401, mimetype="application/json")
     try:
         body = req.get_json()
@@ -166,6 +169,17 @@ def execute_command(req):
         return func.HttpResponse(json.dumps({"error": err}), status_code=400, mimetype="application/json")
 
     script = cmd["script"].replace("{sidadm}", shlex.quote(sidadm)).replace("{instance}", shlex.quote(instance)).replace("{sid}", shlex.quote(sid))
+
+    # Structured audit log — captured by Application Insights
+    logging.info(json.dumps({
+        "event": "command_execute",
+        "caller": caller,
+        "command_id": command_id,
+        "vm": vm,
+        "rg": rg,
+        "sid": sid,
+        "sidadm": sidadm
+    }))
 
     try:
         import time
@@ -196,6 +210,7 @@ def execute_command(req):
                     status = data.get("status", data.get("provisioningState", "Succeeded"))
                     if status.lower() in ("succeeded", ""):
                         stdout, stderr = parse_run_command_output(data)
+                        logging.info(json.dumps({"event": "command_result", "caller": caller, "command_id": command_id, "vm": vm, "status": "success", "stdout_len": len(stdout)}))
                         return func.HttpResponse(json.dumps({
                             "vm": vm, "rg": rg, "command_id": command_id, "description": cmd["description"],
                             "stdout": stdout, "stderr": stderr if stderr and stderr.strip() else None
@@ -212,6 +227,7 @@ def execute_command(req):
 
         elif resp.status_code == 200:
             stdout, stderr = parse_run_command_output(resp.json())
+            logging.info(json.dumps({"event": "command_result", "caller": caller, "command_id": command_id, "vm": vm, "status": "success", "stdout_len": len(stdout)}))
             return func.HttpResponse(json.dumps({
                 "vm": vm, "rg": rg, "command_id": command_id, "description": cmd["description"],
                 "stdout": stdout, "stderr": stderr if stderr and stderr.strip() else None
@@ -220,7 +236,8 @@ def execute_command(req):
             return func.HttpResponse(json.dumps({"error": f"Run-command failed: {resp.status_code}", "detail": resp.text[:500]}),
                 status_code=502, mimetype="application/json")
     except requests.exceptions.Timeout:
+        logging.warning(json.dumps({"event": "command_result", "caller": caller, "command_id": command_id, "vm": vm, "status": "timeout"}))
         return func.HttpResponse(json.dumps({"error": "Timeout — VM Run Command took too long (>180s). The VM may be unresponsive or under heavy load."}), status_code=504, mimetype="application/json")
     except Exception as e:
-        logging.error(f"Command execution error: {e}")
+        logging.error(json.dumps({"event": "command_result", "caller": caller, "command_id": command_id, "vm": vm, "status": "error", "error": str(e)}))
         return func.HttpResponse(json.dumps({"error": str(e)}), status_code=500, mimetype="application/json")

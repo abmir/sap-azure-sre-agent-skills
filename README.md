@@ -105,11 +105,32 @@ This matters for **AAU (Agent Activity Unit) cost optimization**: most user quer
 
 ## Security Model
 
-- **Managed Identity (MI)** — all Azure API calls authenticate via the agent's MI
-- **Proxy functions** — VM commands go through a hardened proxy with a fixed allowlist
-- **Least privilege RBAC** — Reader + Log Analytics Reader + Monitoring Reader on SAP resource groups
-- **No hardcoded secrets** — API keys in app settings, MI tokens at runtime
-- **ServiceNow/APM integrations** — conditional, dormant until configured
+- **Managed Identity (MI)** — all Azure API calls authenticate via the agent's MI. No passwords or service principals.
+- **Command allowlist** — VM commands go through a hardened proxy with 14 pre-approved read-only commands. No arbitrary script execution on SAP VMs.
+- **Input sanitization** — all user-supplied parameters (`sidadm`, `instance`, `sid`, `filepath`) are validated with strict regex patterns and shell-quoted (`shlex.quote`) before execution.
+- **Path traversal protection** — config proxy validates blob paths against directory traversal attacks (`../`, absolute paths, invalid characters).
+- **Least privilege RBAC** — agent MI gets Reader only. Proxy MI gets a custom role limited to `virtualMachines/runCommand/action` + `virtualMachines/read`.
+- **Per-agent API keys** — each SRE Agent instance authenticates with its own `AGENT_KEY_*` app setting. Rotate by updating the setting.
+- **No hardcoded secrets** — all environment-specific values come from app settings or Team Onboarding. No credentials in code or skill files.
+- **Network isolation** — storage account firewall set to Deny by default. Only VNet-integrated function apps and SAP VM subnets can access config data.
+- **Generic error responses** — proxy functions return sanitized error messages to prevent leaking internal infrastructure details.
+- **Audit trail** — every command execution is logged to Application Insights with structured JSON: caller ID, command, target VM, result, and latency.
+
+## Cost Optimization (AAU Efficiency)
+
+- **Data reuse** — all 15 skills include instructions to reuse landscape registry, VM configs, and AMS query results already in the conversation context. No redundant API calls.
+- **Batch queries** — Performance Diagnostics batches 6 HANA checks into a single KQL query instead of running them individually.
+- **Response caching** — config proxy caches blob responses in-memory (1-hour TTL). Repeat queries within the same hour hit cache, not storage.
+- **Tiered autonomy** — T1/T2 skills are read-only (4–6 API calls each). T3/T4 skills only activate when needed and are rate-limited (max 5 autonomous actions/day).
+- **System criticality tagging** — landscape inventory supports `criticality` field (`production`, `non-production`, `dev`) so T4 skills can apply stricter guardrails on production systems.
+
+## Reliability & Resilience
+
+- **Proxy fallback** — all skills include fallback instructions: if config or command proxy is unreachable, continue with Azure-native data sources (AMS, ARM API, Azure Monitor) and inform the user.
+- **Collector robustness** — all HANA and cluster commands in the collector script are wrapped with `timeout 15` to prevent hangs when services are down. Hostname validation prevents malformed blob paths.
+- **Idempotent collection** — weekly cron uploads are idempotent. Re-running the collector overwrites `latest/` with fresh data; historical snapshots are preserved in dated directories.
+- **Log rotation** — collector log file (`/var/log/sre-config-collect.log`) uses logrotate with 12-week retention to prevent disk fill on SAP VMs.
+- **Offline resilience** — config snapshots in blob storage remain accessible even when SAP VMs are shut down (auto-shutdown schedules, maintenance windows), enabling RCA on unavailable systems.
 
 ## Updates
 

@@ -3,10 +3,25 @@ import logging
 import json
 import os
 import re
+import time as _time
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient
 
 app = func.FunctionApp()
+
+# --- In-memory response cache (1-hour TTL) ---
+_cache = {}
+CACHE_TTL = int(os.environ.get("CACHE_TTL_SECONDS", "3600"))
+
+def cache_get(key):
+    """Return cached data if present and not expired, else None."""
+    if key in _cache and (_time.time() - _cache[key][0]) < CACHE_TTL:
+        return _cache[key][1]
+    return None
+
+def cache_set(key, data):
+    """Store data in cache with current timestamp."""
+    _cache[key] = (_time.time(), data)
 
 # Configuration from environment
 STORAGE_ACCOUNT = os.environ.get("STORAGE_ACCOUNT_NAME", "")
@@ -57,8 +72,15 @@ def get_registry(req: func.HttpRequest) -> func.HttpResponse:
     if auth_err:
         return auth_err
     try:
+        cached = cache_get("registry")
+        if cached:
+            logging.info(json.dumps({"event": "registry_read", "source": "cache"}))
+            return func.HttpResponse(cached, mimetype="application/json", status_code=200)
+
         blob_client = container_client.get_blob_client("sap-landscape-inventory.json")
         data = blob_client.download_blob().readall().decode("utf-8")
+        cache_set("registry", data)
+        logging.info(json.dumps({"event": "registry_read", "source": "blob"}))
         return func.HttpResponse(data, mimetype="application/json", status_code=200)
     except Exception as e:
         logging.error(f"Failed to read registry: {e}")
@@ -131,6 +153,12 @@ def get_all_configs(req: func.HttpRequest) -> func.HttpResponse:
     prefix = f"{sid}/{hostname}/latest/"
     files = {}
     try:
+        cache_key = f"configs:{sid}:{hostname}"
+        cached = cache_get(cache_key)
+        if cached:
+            logging.info(json.dumps({"event": "configs_read", "sid": sid, "hostname": hostname, "source": "cache"}))
+            return func.HttpResponse(cached, mimetype="application/json", status_code=200)
+
         blobs = container_client.list_blobs(name_starts_with=prefix)
         for blob in blobs:
             # Skip directories and manifest
@@ -146,8 +174,11 @@ def get_all_configs(req: func.HttpRequest) -> func.HttpResponse:
                 logging.warning(f"Failed to read {blob.name}: {e}")
                 files[rel_path] = None
 
+        result_json = json.dumps({"sid": sid, "hostname": hostname, "file_count": len(files), "files": files})
+        cache_set(cache_key, result_json)
+        logging.info(json.dumps({"event": "configs_read", "sid": sid, "hostname": hostname, "source": "blob", "file_count": len(files)}))
         return func.HttpResponse(
-            json.dumps({"sid": sid, "hostname": hostname, "file_count": len(files), "files": files}),
+            result_json,
             mimetype="application/json", status_code=200
         )
     except Exception as e:
@@ -173,6 +204,12 @@ def get_system_configs(req: func.HttpRequest) -> func.HttpResponse:
     prefix = f"{sid}/"
     vms = {}
     try:
+        cache_key = f"system_configs:{sid}"
+        cached = cache_get(cache_key)
+        if cached:
+            logging.info(json.dumps({"event": "system_configs_read", "sid": sid, "source": "cache"}))
+            return func.HttpResponse(cached, mimetype="application/json", status_code=200)
+
         blobs = list(container_client.list_blobs(name_starts_with=prefix))
 
         # Group by hostname
@@ -202,8 +239,11 @@ def get_system_configs(req: func.HttpRequest) -> func.HttpResponse:
             "vm_count": len(vms),
             "vms": {h: {"file_count": len(f), "files": f} for h, f in vms.items()}
         }
-        return func.HttpResponse(json.dumps(result), mimetype="application/json", status_code=200)
+        result_json = json.dumps(result)
+        cache_set(cache_key, result_json)
+        logging.info(json.dumps({"event": "system_configs_read", "sid": sid, "source": "blob", "vm_count": len(vms)}))
+        return func.HttpResponse(result_json, mimetype="application/json", status_code=200)
 
     except Exception as e:
         logging.error(f"Failed to list/read configs for {sid}: {e}")
-        return func.HttpResponse(json.dumps({"error": str(e)}), status_code=500, mimetype="application/json")
+        return func.HttpResponse(json.dumps({"error": "Failed to read system configs"}), status_code=500, mimetype="application/json")
