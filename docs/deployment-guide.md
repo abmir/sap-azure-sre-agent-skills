@@ -614,3 +614,160 @@ The script is **idempotent** — safe to re-run if any step fails. It skips reso
 After the script completes, continue with:
 - **Phase 2** (SAP VM collectors) — still manual per-VM
 - **Phase 3** (SRE Agent setup) — still manual via portal
+
+---
+
+## Teardown / Uninstall (Advisory)
+
+Use this section to undo the SRE Agent deployment. Each step includes a **pre-check** to verify the resource is safe to remove before deleting.
+
+> **Important:** This guide only removes resources created or modified by this solution. Review each pre-check carefully — some resources may be shared with other workloads.
+
+### Set Variables
+
+Use the same values from your original deployment:
+
+```powershell
+$SUB_ID         = "<your-subscription-id>"
+$RG_SRE_OPS     = "RG_SRE_OPS"
+$UMI_NAME       = "sre-ops-mi"
+$VNET_NAME      = "<your-sap-vnet-name>"
+$VNET_RG        = "<your-vnet-resource-group>"
+$SUBNET_NAME    = "IntegrationSubnet"
+$SAP_RGS        = @("RG_SAP_ECP", "RG_SAP_QAS")   # All SAP resource groups
+
+az account set --subscription $SUB_ID
+$UMI_PRINCIPAL_ID = az identity show -n $UMI_NAME -g $RG_SRE_OPS --query principalId -o tsv 2>$null
+```
+
+### Step T1 — Remove RBAC Assignments on SAP Resource Groups
+
+**What it undoes:** Step 1.10 — custom role assignments on SAP RGs.
+
+```powershell
+# Pre-check: list all role assignments for the UMI
+az role assignment list --assignee $UMI_PRINCIPAL_ID --all --query "[].{role:roleDefinitionName, scope:scope}" -o table
+
+# Remove: delete all role assignments for the UMI
+az role assignment list --assignee $UMI_PRINCIPAL_ID --all --query "[].id" -o tsv | ForEach-Object {
+    az role assignment delete --ids $_
+    Write-Host "Deleted assignment: $_"
+}
+```
+
+### Step T2 — Remove Custom Role Definition
+
+**What it undoes:** Step 1.10 — custom "VM Run Command Operator" role.
+
+```powershell
+# Pre-check: verify no OTHER principals are using this role
+$assignments = az role assignment list --role "Custom - VM Run Command Operator" --query "[].principalId" -o tsv
+if ($assignments) {
+    Write-Host "WARNING: Other principals are using this role:" -ForegroundColor Yellow
+    $assignments | ForEach-Object { Write-Host "  $_" }
+    Write-Host "Skipping role deletion — remove these assignments first or keep the role." -ForegroundColor Yellow
+} else {
+    az role definition delete --name "Custom - VM Run Command Operator"
+    Write-Host "Deleted custom role: Custom - VM Run Command Operator"
+}
+```
+
+### Step T3 — Remove UMI from SAP VMs
+
+**What it undoes:** Step 2.3 — UMI assigned to SAP VMs for collector upload.
+
+```powershell
+$UMI_ID = az identity show -n $UMI_NAME -g $RG_SRE_OPS --query id -o tsv
+
+# Pre-check: for each VM, check if the UMI is used for OTHER purposes
+foreach ($rg in $SAP_RGS) {
+    $vms = az vm list -g $rg --query "[].name" -o tsv
+    foreach ($vm in $vms) {
+        $identities = az vm identity show -g $rg -n $vm --query "userAssignedIdentities" -o json 2>$null
+        if ($identities -and $identities -ne "null") {
+            $count = ($identities | ConvertFrom-Json).PSObject.Properties.Count
+            if ($count -gt 1) {
+                Write-Host "WARNING: $vm has $count user-assigned identities — only removing sre-ops-mi" -ForegroundColor Yellow
+            }
+            az vm identity remove -g $rg -n $vm --identities $UMI_ID 2>$null
+            Write-Host "Removed UMI from $vm"
+        }
+    }
+}
+```
+
+### Step T4 — Remove Cron Jobs and Collector from SAP VMs
+
+**What it undoes:** Phase 2 — collector script, cron, and environment files on SAP VMs.
+
+```bash
+# Run on EACH SAP VM via SSH:
+
+# Pre-check: verify these are SRE files
+cat /etc/cron.d/sre-collector
+cat /opt/sre/sre.env
+ls -la /opt/sre/
+
+# Remove:
+sudo rm -f /etc/cron.d/sre-collector
+sudo rm -f /opt/sre/run-collector.sh
+sudo rm -f /opt/sre/collect-sap-configs.sh
+sudo rm -f /opt/sre/sre.env
+sudo rmdir /opt/sre 2>/dev/null   # Only removes if empty
+sudo rm -f /etc/logrotate.d/sre-config-collect
+```
+
+### Step T5 — Remove Integration Subnet
+
+**What it undoes:** Step 1.5 — IntegrationSubnet created in shared VNet.
+
+```powershell
+# Pre-check: verify no other services are using this subnet
+$delegations = az network vnet subnet show --vnet-name $VNET_NAME -g $VNET_RG -n $SUBNET_NAME --query "delegations[].serviceName" -o tsv 2>$null
+$ipConfigs = az network vnet subnet show --vnet-name $VNET_NAME -g $VNET_RG -n $SUBNET_NAME --query "ipConfigurations" -o tsv 2>$null
+
+if ($ipConfigs) {
+    Write-Host "WARNING: Subnet still has active IP configurations — other services are using it." -ForegroundColor Yellow
+    Write-Host "Skipping subnet deletion. Remove other VNet integrations first." -ForegroundColor Yellow
+} else {
+    az network vnet subnet delete --vnet-name $VNET_NAME -g $VNET_RG -n $SUBNET_NAME
+    Write-Host "Deleted subnet: $SUBNET_NAME"
+}
+```
+
+### Step T6 — Delete SRE Agent in Portal
+
+**What it undoes:** Phase 3 — the SRE Agent instance and its managed identity.
+
+1. Go to [sre.azure.com](https://sre.azure.com)
+2. Select your agent → **Settings** → **Delete agent**
+3. This removes the agent, its MI, and all skills/knowledge sources
+
+### Step T7 — Delete RG_SRE_OPS Resource Group
+
+**What it undoes:** Steps 1.2 through 1.9 — all Azure infrastructure.
+
+```powershell
+# Pre-check: list everything in the resource group
+az resource list -g $RG_SRE_OPS --query "[].{name:name, type:type}" -o table
+
+# Verify only SRE resources are in the group (expected: 2 function apps, 1 plan,
+# 1 storage account, 1 managed identity, 2 App Insights, Event Grid topics)
+# If you see unexpected resources, investigate before deleting.
+
+# Delete the entire resource group
+az group delete --name $RG_SRE_OPS --yes --no-wait
+Write-Host "Deleting $RG_SRE_OPS (async — may take a few minutes)"
+```
+
+### Teardown Summary
+
+| Step | What is Removed | Where | Reversible? |
+|------|----------------|-------|-------------|
+| T1 | RBAC role assignments | SAP RGs | Re-run deploy script |
+| T2 | Custom role definition | Subscription | Re-run deploy script |
+| T3 | UMI from SAP VMs | SAP VMs | Re-run deploy script |
+| T4 | Cron job, collector, env files | SAP VMs (SSH) | Re-deploy collector |
+| T5 | IntegrationSubnet | Shared VNet RG | Re-create subnet |
+| T6 | SRE Agent instance | sre.azure.com | Re-create agent |
+| T7 | RG_SRE_OPS (everything else) | RG_SRE_OPS | Re-run deploy script |
