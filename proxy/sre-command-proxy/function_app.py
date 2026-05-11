@@ -35,8 +35,8 @@ ALLOWED_COMMANDS = {
 }
 
 SUB_ID = os.environ.get("SUBSCRIPTION_ID", "")
-if not SUB_ID:
-    raise ValueError("SUBSCRIPTION_ID app setting is required. Set it in Azure Function App Configuration.")
+# SUBSCRIPTION_ID env var is the default. Callers can override per-request
+# by passing "subscription_id" in the POST body (for multi-subscription SAP landscapes).
 
 def get_mi_token():
     """Get ARM bearer token via DefaultAzureCredential (handles App Service MI, IMDS, CLI)."""
@@ -154,6 +154,10 @@ def execute_command(req):
     command_id = body.get("command_id", "").strip()
     sidadm, instance = body.get("sidadm", "").strip(), body.get("instance", "00").strip()
     sid = body.get("sid", "").strip().upper()
+    sub_id = body.get("subscription_id", "").strip() or SUB_ID
+
+    if not sub_id:
+        return func.HttpResponse(json.dumps({"error": "Missing subscription_id in request body or SUBSCRIPTION_ID app setting"}), status_code=400, mimetype="application/json")
 
     if command_id not in ALLOWED_COMMANDS:
         return func.HttpResponse(json.dumps({"error": f"Unknown: {command_id}", "available": list(ALLOWED_COMMANDS.keys())}), status_code=400, mimetype="application/json")
@@ -184,7 +188,7 @@ def execute_command(req):
     try:
         import time
         token = get_mi_token()
-        vm_id = f"/subscriptions/{SUB_ID}/resourceGroups/{rg}/providers/Microsoft.Compute/virtualMachines/{vm}"
+        vm_id = f"/subscriptions/{sub_id}/resourceGroups/{rg}/providers/Microsoft.Compute/virtualMachines/{vm}"
         url = f"https://management.azure.com{vm_id}/runCommand?api-version=2024-03-01"
 
         resp = requests.post(url,

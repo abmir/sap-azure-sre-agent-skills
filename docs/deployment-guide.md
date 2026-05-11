@@ -42,22 +42,19 @@ Edit these values for your environment, then paste into your terminal:
 
 ```powershell
 # === EDIT THESE ===
-$SUB_ID         = "<your-subscription-id>"
+$SUB_ID         = "<shared-services-subscription-id>"   # Where RG_SRE_OPS will live
 $TENANT_ID      = "<your-tenant-id>"
 $LOCATION       = "centralus"                    # Region where SAP runs
-$RG_SRE_OPS         = "RG_SRE_OPS"                   # Resource group for SRE components
+$RG_SRE_OPS     = "RG_SRE_OPS"                  # Resource group for SRE components
 $STORAGE_NAME   = "stsreconfigs$(Get-Random -Max 999)"  # Must be globally unique
-$UMI_NAME       = "sre-ops-umi"                   # User-assigned managed identity for proxies + collector
-$FUNC_PLAN      = "sre-ops-plan"                  # App Service plan (shared by both functions)
-$FUNC_CONFIG     = "sap-config-proxy"             # Config proxy function app name
-$FUNC_COMMAND    = "sap-command-proxy"            # Command proxy function app name
-$CONTAINER_NAME = "sap-configs"                   # Blob container for SAP configs
-$VNET_NAME      = "<your-sap-vnet-name>"          # VNet where SAP VMs run
-$VNET_RG        = "<your-vnet-resource-group>"    # RG containing the VNet
-$SUBNET_INTEGRATION = "IntegrationSubnet"         # Subnet for function app VNet integration (create if needed)
-
-# SAP resource groups (one per system)
-$SAP_RGS = @("RG_SAP_ECP", "RG_SAP_QAS")         # Add all SAP resource groups
+$UMI_NAME       = "sre-ops-umi"                  # User-assigned managed identity for proxies + collector
+$FUNC_PLAN      = "sre-ops-plan"                 # App Service plan (shared by both functions)
+$FUNC_CONFIG    = "sap-config-proxy"             # Config proxy function app name
+$FUNC_COMMAND   = "sap-command-proxy"            # Command proxy function app name
+$CONTAINER_NAME = "sap-configs"                  # Blob container for SAP configs
+$VNET_NAME      = "<hub-vnet-name>"              # Hub/shared services VNet (peered to SAP spoke VNets)
+$VNET_RG        = "<hub-vnet-resource-group>"    # RG containing the hub VNet
+$SUBNET_INTEGRATION = "IntegrationSubnet"        # Subnet for function app VNet integration (create if needed)
 ```
 
 ```powershell
@@ -224,36 +221,43 @@ func azure functionapp publish $FUNC_COMMAND --python
 
 ### Step 1.10 — RBAC for Command Proxy
 
-The command proxy needs permission to run VM commands on SAP VMs. Create a custom role with minimum privileges:
+The command proxy's UMI needs permission to run VM commands on SAP VMs. This is a one-time setup that the customer performs on their SAP resource groups (which may be in different subscriptions).
+
+**Create the custom role** in each subscription that has SAP VMs:
 
 ```powershell
-# Create custom role definition
-$roleDef = @{
-    Name = "Custom - VM Run Command Operator"
-    Description = "Run read-only commands on SAP VMs via Azure VM Run Command"
-    Actions = @(
-        "Microsoft.Compute/virtualMachines/runCommand/action"
+# Run this in each SAP subscription
+az role definition create --role-definition @"
+{
+    "Name": "Custom - VM Run Command Operator",
+    "Description": "Run allowlisted read-only commands on SAP VMs via Azure VM Run Command",
+    "Actions": [
+        "Microsoft.Compute/virtualMachines/runCommand/action",
         "Microsoft.Compute/virtualMachines/read"
-    )
-    AssignableScopes = @("/subscriptions/$SUB_ID")
-} | ConvertTo-Json -Depth 3
-
-$roleDef | Out-File -FilePath role-definition.json -Encoding UTF8
-az role definition create --role-definition role-definition.json
+    ],
+    "AssignableScopes": ["/subscriptions/<sap-subscription-id>"]
+}
+"@
 ```
 
-Assign the role to the UMI on each SAP resource group:
+**RBAC checklist** — assign these roles to the UMI (`$UMI_PRINCIPAL_ID` from Step 1.3):
+
+| Role | Scope | Purpose |
+|------|-------|---------|
+| Custom - VM Run Command Operator | Each SAP resource group | Command proxy can run allowlisted commands |
+| Reader | Each SAP resource group | Agent can discover VMs and read properties |
+| Storage Blob Data Contributor | Storage account (from Step 1.4) | SAP VMs can upload config files |
 
 ```powershell
-foreach ($rg in $SAP_RGS) {
-    az role assignment create `
-        --assignee-object-id $UMI_PRINCIPAL_ID `
-        --assignee-principal-type ServicePrincipal `
-        --role "Custom - VM Run Command Operator" `
-        --scope "/subscriptions/$SUB_ID/resourceGroups/$rg"
-    Write-Host "Assigned VM Run Command role on $rg"
-}
+# Example: assign VM Run Command role on one SAP resource group
+az role assignment create `
+    --assignee-object-id $UMI_PRINCIPAL_ID `
+    --assignee-principal-type ServicePrincipal `
+    --role "Custom - VM Run Command Operator" `
+    --scope "/subscriptions/<sap-sub>/resourceGroups/<sap-rg>"
 ```
+
+> **Multi-subscription:** If SAP VMs are in different subscriptions, create the custom role and assign RBAC in each subscription. The UMI in the shared services subscription can receive cross-subscription role assignments.
 
 ---
 
@@ -294,16 +298,10 @@ ssh <vm-ip> "sudo mv /tmp/collect-sap-configs.sh /opt/sre/ && sudo chmod +x /opt
 Each SAP VM needs a user-assigned managed identity with **Storage Blob Data Contributor** to upload configs. You can reuse the same UMI from Phase 1 or create a separate one.
 
 ```powershell
-# Assign the UMI to each SAP VM
-foreach ($rg in $SAP_RGS) {
-    $vms = az vm list -g $rg --query "[].name" -o tsv
-    foreach ($vm in $vms) {
-        az vm identity assign -g $rg -n $vm --identities $UMI_ID
-        Write-Host "Assigned UMI to $vm in $rg"
-    }
-}
+# Assign the UMI to a SAP VM (repeat for each VM)
+az vm identity assign -g <sap-rg> -n <vm-name> --identities $UMI_ID
 
-# Grant Storage Blob Data Contributor (upload permission)
+# Grant Storage Blob Data Contributor on the storage account (one-time)
 az role assignment create `
     --assignee-object-id $UMI_PRINCIPAL_ID `
     --assignee-principal-type ServicePrincipal `
@@ -311,7 +309,7 @@ az role assignment create `
     --scope "/subscriptions/$SUB_ID/resourceGroups/$RG_SRE_OPS/providers/Microsoft.Storage/storageAccounts/$STORAGE_NAME"
 ```
 
-> **Note:** If the storage account firewall is set to Deny, SAP VMs must be in a subnet with a service endpoint or private endpoint to the storage account, OR you add each VM subnet to the storage firewall rules.
+> **Note:** If SAP VMs are in a different subscription, the UMI can still be assigned cross-subscription. The storage firewall must allow access from the SAP VM subnets (add VNet rules or use private endpoints).
 
 ### Step 2.4 — Install Azure CLI on SAP VMs (if not present)
 

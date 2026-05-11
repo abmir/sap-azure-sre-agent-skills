@@ -9,11 +9,12 @@
     
     After running this script, you only need to:
     1. Deploy function code (func azure functionapp publish)
-    2. Deploy collector script to SAP VMs
-    3. Create the SRE Agent at sre.azure.com and upload skills
+    2. Assign RBAC on SAP resource groups (see deployment guide Step 1.10)
+    3. Deploy collector script to SAP VMs
+    4. Create the SRE Agent at sre.azure.com and install skills
 
 .PARAMETER SubscriptionId
-    Azure subscription ID where SAP workloads run.
+    Shared services subscription ID where RG_SRE_OPS will be created.
 
 .PARAMETER Location
     Azure region (e.g., centralus, eastus2). Should match SAP VM region.
@@ -25,10 +26,10 @@
     Globally unique storage account name for SAP configs.
 
 .PARAMETER VNetName
-    Name of the VNet where SAP VMs run.
+    Name of the hub/shared services VNet (peered to SAP spoke VNets).
 
 .PARAMETER VNetResourceGroup
-    Resource group containing the VNet.
+    Resource group containing the hub VNet.
 
 .PARAMETER IntegrationSubnet
     Subnet for function app VNet integration (created if it doesn't exist).
@@ -36,20 +37,15 @@
 .PARAMETER IntegrationSubnetCidr
     CIDR for the integration subnet if it needs to be created (e.g., 10.40.1.0/26).
 
-.PARAMETER SapResourceGroups
-    Comma-separated list of SAP resource groups (e.g., "RG_SAP_ECP,RG_SAP_QAS").
-
 .EXAMPLE
     .\deploy-sre-infra.ps1 `
         -SubscriptionId "12345678-1234-1234-1234-123456789012" `
         -Location "centralus" `
-        -RG_SRE_OPS "RG_SRE_OPS" `
         -StorageAccountName "stsreconfigs001" `
-        -VNetName "VNET_SAP" `
-        -VNetResourceGroup "RG_Network" `
+        -VNetName "Hub-VNet" `
+        -VNetResourceGroup "RG_SharedServices" `
         -IntegrationSubnet "IntegrationSubnet" `
-        -IntegrationSubnetCidr "10.40.1.0/26" `
-        -SapResourceGroups "RG_SAP_ECP,RG_SAP_QAS"
+        -IntegrationSubnetCidr "10.40.1.0/26"
 #>
 
 param(
@@ -60,8 +56,7 @@ param(
     [Parameter(Mandatory)] [string] $VNetName,
     [Parameter(Mandatory)] [string] $VNetResourceGroup,
     [string] $IntegrationSubnet = "IntegrationSubnet",
-    [string] $IntegrationSubnetCidr,
-    [Parameter(Mandatory)] [string] $SapResourceGroups
+    [string] $IntegrationSubnetCidr
 )
 
 $ErrorActionPreference = "Stop"
@@ -70,7 +65,6 @@ $FuncPlan        = "sre-ops-plan"
 $FuncConfig      = "sap-config-proxy"
 $FuncCommand     = "sap-command-proxy"
 $ContainerName   = "sap-configs"
-$SapRGs          = $SapResourceGroups -split ","
 
 # --- Colors ---
 function Write-Step  { param($msg) Write-Host "`n>> $msg" -ForegroundColor Cyan }
@@ -90,7 +84,6 @@ Write-Host "SRE RG:          $RG_SRE_OPS"
 Write-Host "Storage:         $StorageAccountName"
 Write-Host "VNet:            $VNetName ($VNetResourceGroup)"
 Write-Host "Subnet:          $IntegrationSubnet"
-Write-Host "SAP RGs:         $($SapRGs -join ', ')"
 Write-Host ""
 
 # ============================================
@@ -293,49 +286,9 @@ az functionapp vnet-integration add -n $FuncCommand -g $RG_SRE_OPS --vnet $VNetN
 Write-OK "$FuncCommand configured (VNet + AlwaysOn + app settings)"
 
 # ============================================
-# Step 9: Custom VM Run Command Role + RBAC
+# Step 9: Summary
 # ============================================
-Write-Step "Step 9/10 — VM Run Command Role + SAP RG RBAC"
-
-$roleExists = az role definition list --name "Custom - VM Run Command Operator" --query "[0].id" -o tsv 2>$null
-if ($roleExists) {
-    Write-Skip "Custom role already exists"
-} else {
-    $roleDef = @{
-        Name = "Custom - VM Run Command Operator"
-        Description = "Run allowlisted read-only commands on SAP VMs via Azure VM Run Command"
-        Actions = @(
-            "Microsoft.Compute/virtualMachines/runCommand/action"
-            "Microsoft.Compute/virtualMachines/read"
-        )
-        AssignableScopes = @("/subscriptions/$SubscriptionId")
-    } | ConvertTo-Json -Depth 3
-
-    $tempFile = [System.IO.Path]::GetTempFileName()
-    $roleDef | Out-File -FilePath $tempFile -Encoding UTF8
-    az role definition create --role-definition $tempFile --output none
-    Remove-Item $tempFile
-    Write-OK "Created custom role: VM Run Command Operator"
-}
-
-# Assign roles on each SAP RG
-foreach ($rg in $SapRGs) {
-    $rgTrimmed = $rg.Trim()
-    $rgScope = "/subscriptions/$SubscriptionId/resourceGroups/$rgTrimmed"
-    
-    az role assignment create `
-        --assignee-object-id $UMI_PRINCIPAL_ID `
-        --assignee-principal-type ServicePrincipal `
-        --role "Custom - VM Run Command Operator" `
-        --scope $rgScope `
-        --output none 2>$null
-    Write-OK "VM Run Command role on $rgTrimmed"
-}
-
-# ============================================
-# Step 10: Summary
-# ============================================
-Write-Step "Step 10/10 — Deployment Summary"
+Write-Step "Step 9/9 — Deployment Summary"
 
 $configUrl = "https://$FuncConfig.azurewebsites.net/api"
 $commandUrl = "https://$FuncCommand.azurewebsites.net/api"
@@ -359,13 +312,18 @@ Write-Host "  1. Deploy function code:"
 Write-Host "     cd proxy/sre-config-proxy && func azure functionapp publish $FuncConfig --python"
 Write-Host "     cd proxy/sre-command-proxy && func azure functionapp publish $FuncCommand --python"
 Write-Host ""
-Write-Host "  2. Deploy collector to SAP VMs (see docs/deployment-guide.md Phase 2)"
+Write-Host "  2. Assign RBAC on SAP resource groups (see deployment guide Step 1.10):"
+Write-Host "     - Custom VM Run Command Operator role on each SAP RG"
+Write-Host "     - Reader role on each SAP RG"
+Write-Host "     - UMI Principal ID: $UMI_PRINCIPAL_ID"
+Write-Host ""
+Write-Host "  3. Deploy collector to SAP VMs (see docs/deployment-guide.md Phase 2)"
 Write-Host "     Set these env vars on each VM in /opt/sre/sre.env:"
 Write-Host "       SRE_STORAGE_ACCOUNT=$StorageAccountName"
 Write-Host "       SRE_UMI_CLIENT_ID=$UMI_CLIENT_ID"
 Write-Host ""
-Write-Host "  3. Create SRE Agent at https://sre.azure.com"
-Write-Host "     - Connect this repo as Knowledge Source"
-Write-Host "     - Upload 15 skills from skills/ folder"
+Write-Host "  4. Create SRE Agent at https://sre.azure.com"
+Write-Host "     - Add this repo as Plugin Marketplace source (installs all 15 skills)"
+Write-Host "     - Connect repo as Knowledge Source"
 Write-Host "     - Fill in Team Onboarding with values above"
 Write-Host ""
