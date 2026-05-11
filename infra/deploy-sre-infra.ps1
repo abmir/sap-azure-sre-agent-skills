@@ -18,7 +18,7 @@
 .PARAMETER Location
     Azure region (e.g., centralus, eastus2). Should match SAP VM region.
 
-.PARAMETER SreResourceGroup
+.PARAMETER RG_SRE_OPS
     Resource group name for SRE operations components.
 
 .PARAMETER StorageAccountName
@@ -43,7 +43,7 @@
     .\deploy-sre-infra.ps1 `
         -SubscriptionId "12345678-1234-1234-1234-123456789012" `
         -Location "centralus" `
-        -SreResourceGroup "RG_SRE_OPS" `
+        -RG_SRE_OPS "RG_SRE_OPS" `
         -StorageAccountName "stsreconfigs001" `
         -VNetName "VNET_SAP" `
         -VNetResourceGroup "RG_Network" `
@@ -55,7 +55,7 @@
 param(
     [Parameter(Mandatory)] [string] $SubscriptionId,
     [Parameter(Mandatory)] [string] $Location,
-    [string] $SreResourceGroup = "RG_SRE_OPS",
+    [string] $RG_SRE_OPS = "RG_SRE_OPS",
     [Parameter(Mandatory)] [string] $StorageAccountName,
     [Parameter(Mandatory)] [string] $VNetName,
     [Parameter(Mandatory)] [string] $VNetResourceGroup,
@@ -86,7 +86,7 @@ Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Subscription:    $SubscriptionId"
 Write-Host "Location:        $Location"
-Write-Host "SRE RG:          $SreResourceGroup"
+Write-Host "SRE RG:          $RG_SRE_OPS"
 Write-Host "Storage:         $StorageAccountName"
 Write-Host "VNet:            $VNetName ($VNetResourceGroup)"
 Write-Host "Subnet:          $IntegrationSubnet"
@@ -114,42 +114,42 @@ else { Write-OK "func CLI available" }
 # Step 1: Resource Group
 # ============================================
 Write-Step "Step 1/10 — Resource Group"
-$rgExists = az group exists --name $SreResourceGroup 2>$null
+$rgExists = az group exists --name $RG_SRE_OPS 2>$null
 if ($rgExists -eq "true") {
-    Write-Skip "$SreResourceGroup already exists"
+    Write-Skip "$RG_SRE_OPS already exists"
 } else {
-    az group create --name $SreResourceGroup --location $Location --output none
-    Write-OK "Created $SreResourceGroup"
+    az group create --name $RG_SRE_OPS --location $Location --output none
+    Write-OK "Created $RG_SRE_OPS"
 }
 
 # ============================================
 # Step 2: User-Assigned Managed Identity
 # ============================================
 Write-Step "Step 2/10 — Managed Identity"
-$umiExists = az identity show -n $UmiName -g $SreResourceGroup --query id -o tsv 2>$null
+$umiExists = az identity show -n $UmiName -g $RG_SRE_OPS --query id -o tsv 2>$null
 if ($umiExists) {
     Write-Skip "$UmiName already exists"
 } else {
-    az identity create --name $UmiName --resource-group $SreResourceGroup --location $Location --output none
+    az identity create --name $UmiName --resource-group $RG_SRE_OPS --location $Location --output none
     Write-OK "Created $UmiName"
 }
 
-$UMI_ID = az identity show -n $UmiName -g $SreResourceGroup --query id -o tsv
-$UMI_CLIENT_ID = az identity show -n $UmiName -g $SreResourceGroup --query clientId -o tsv
-$UMI_PRINCIPAL_ID = az identity show -n $UmiName -g $SreResourceGroup --query principalId -o tsv
+$UMI_ID = az identity show -n $UmiName -g $RG_SRE_OPS --query id -o tsv
+$UMI_CLIENT_ID = az identity show -n $UmiName -g $RG_SRE_OPS --query clientId -o tsv
+$UMI_PRINCIPAL_ID = az identity show -n $UmiName -g $RG_SRE_OPS --query principalId -o tsv
 Write-OK "UMI Client ID: $UMI_CLIENT_ID"
 
 # ============================================
 # Step 3: Storage Account
 # ============================================
 Write-Step "Step 3/10 — Storage Account"
-$stExists = az storage account show --name $StorageAccountName -g $SreResourceGroup --query id -o tsv 2>$null
+$stExists = az storage account show --name $StorageAccountName -g $RG_SRE_OPS --query id -o tsv 2>$null
 if ($stExists) {
     Write-Skip "$StorageAccountName already exists"
 } else {
     az storage account create `
         --name $StorageAccountName `
-        --resource-group $SreResourceGroup `
+        --resource-group $RG_SRE_OPS `
         --location $Location `
         --sku Standard_LRS `
         --kind StorageV2 `
@@ -173,7 +173,7 @@ if ($containerExists -eq "true") {
 # Step 4: Storage RBAC
 # ============================================
 Write-Step "Step 4/10 — Storage RBAC"
-$stScope = "/subscriptions/$SubscriptionId/resourceGroups/$SreResourceGroup/providers/Microsoft.Storage/storageAccounts/$StorageAccountName"
+$stScope = "/subscriptions/$SubscriptionId/resourceGroups/$RG_SRE_OPS/providers/Microsoft.Storage/storageAccounts/$StorageAccountName"
 
 # Blob Data Reader (for config proxy to read)
 az role assignment create `
@@ -224,13 +224,13 @@ Write-OK "Storage firewall: added $IntegrationSubnet"
 # Step 6: App Service Plan
 # ============================================
 Write-Step "Step 6/10 — App Service Plan"
-$planExists = az appservice plan show -n $FuncPlan -g $SreResourceGroup --query id -o tsv 2>$null
+$planExists = az appservice plan show -n $FuncPlan -g $RG_SRE_OPS --query id -o tsv 2>$null
 if ($planExists) {
     Write-Skip "$FuncPlan already exists"
 } else {
     az appservice plan create `
         --name $FuncPlan `
-        --resource-group $SreResourceGroup `
+        --resource-group $RG_SRE_OPS `
         --location $Location `
         --sku B1 `
         --is-linux `
@@ -247,13 +247,13 @@ Write-Step "Step 7/10 — Function Apps"
 $API_KEY = [guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N").Substring(0,16)
 
 foreach ($funcName in @($FuncConfig, $FuncCommand)) {
-    $funcExists = az functionapp show -n $funcName -g $SreResourceGroup --query id -o tsv 2>$null
+    $funcExists = az functionapp show -n $funcName -g $RG_SRE_OPS --query id -o tsv 2>$null
     if ($funcExists) {
         Write-Skip "$funcName already exists"
     } else {
         az functionapp create `
             --name $funcName `
-            --resource-group $SreResourceGroup `
+            --resource-group $RG_SRE_OPS `
             --plan $FuncPlan `
             --runtime python `
             --runtime-version 3.11 `
@@ -272,24 +272,24 @@ foreach ($funcName in @($FuncConfig, $FuncCommand)) {
 Write-Step "Step 8/10 — Function App Configuration"
 
 # Config proxy
-az functionapp config appsettings set -n $FuncConfig -g $SreResourceGroup --output none --settings `
+az functionapp config appsettings set -n $FuncConfig -g $RG_SRE_OPS --output none --settings `
     AZURE_CLIENT_ID=$UMI_CLIENT_ID `
     STORAGE_ACCOUNT_NAME=$StorageAccountName `
     CONTAINER_NAME=$ContainerName `
     AGENT_KEY_sre1=$API_KEY
 
-az functionapp config set -n $FuncConfig -g $SreResourceGroup --always-on true --output none
-az functionapp vnet-integration add -n $FuncConfig -g $SreResourceGroup --vnet $VNetName --subnet $IntegrationSubnet --output none 2>$null
+az functionapp config set -n $FuncConfig -g $RG_SRE_OPS --always-on true --output none
+az functionapp vnet-integration add -n $FuncConfig -g $RG_SRE_OPS --vnet $VNetName --subnet $IntegrationSubnet --output none 2>$null
 Write-OK "$FuncConfig configured (VNet + AlwaysOn + app settings)"
 
 # Command proxy
-az functionapp config appsettings set -n $FuncCommand -g $SreResourceGroup --output none --settings `
+az functionapp config appsettings set -n $FuncCommand -g $RG_SRE_OPS --output none --settings `
     AZURE_CLIENT_ID=$UMI_CLIENT_ID `
     SUBSCRIPTION_ID=$SubscriptionId `
     AGENT_KEY_sre1=$API_KEY
 
-az functionapp config set -n $FuncCommand -g $SreResourceGroup --always-on true --output none
-az functionapp vnet-integration add -n $FuncCommand -g $SreResourceGroup --vnet $VNetName --subnet $IntegrationSubnet --output none 2>$null
+az functionapp config set -n $FuncCommand -g $RG_SRE_OPS --always-on true --output none
+az functionapp vnet-integration add -n $FuncCommand -g $RG_SRE_OPS --vnet $VNetName --subnet $IntegrationSubnet --output none 2>$null
 Write-OK "$FuncCommand configured (VNet + AlwaysOn + app settings)"
 
 # ============================================

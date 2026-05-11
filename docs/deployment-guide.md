@@ -45,7 +45,7 @@ Edit these values for your environment, then paste into your terminal:
 $SUB_ID         = "<your-subscription-id>"
 $TENANT_ID      = "<your-tenant-id>"
 $LOCATION       = "centralus"                    # Region where SAP runs
-$RG_SRE         = "RG_SRE_OPS"                   # Resource group for SRE components
+$RG_SRE_OPS         = "RG_SRE_OPS"                   # Resource group for SRE components
 $STORAGE_NAME   = "stsreconfigs$(Get-Random -Max 999)"  # Must be globally unique
 $UMI_NAME       = "sre-ops-mi"                   # Managed identity for proxies + collector
 $FUNC_PLAN      = "sre-ops-plan"                  # App Service plan (shared by both functions)
@@ -67,18 +67,18 @@ az account set --subscription $SUB_ID
 ### Step 1.2 — Create Resource Group
 
 ```powershell
-az group create --name $RG_SRE --location $LOCATION
+az group create --name $RG_SRE_OPS --location $LOCATION
 ```
 
 ### Step 1.3 — Create User-Assigned Managed Identity
 
 ```powershell
-az identity create --name $UMI_NAME --resource-group $RG_SRE --location $LOCATION
+az identity create --name $UMI_NAME --resource-group $RG_SRE_OPS --location $LOCATION
 
 # Save the outputs — you'll need these later
-$UMI_ID = az identity show -n $UMI_NAME -g $RG_SRE --query id -o tsv
-$UMI_CLIENT_ID = az identity show -n $UMI_NAME -g $RG_SRE --query clientId -o tsv
-$UMI_PRINCIPAL_ID = az identity show -n $UMI_NAME -g $RG_SRE --query principalId -o tsv
+$UMI_ID = az identity show -n $UMI_NAME -g $RG_SRE_OPS --query id -o tsv
+$UMI_CLIENT_ID = az identity show -n $UMI_NAME -g $RG_SRE_OPS --query clientId -o tsv
+$UMI_PRINCIPAL_ID = az identity show -n $UMI_NAME -g $RG_SRE_OPS --query principalId -o tsv
 
 Write-Host "UMI Client ID:    $UMI_CLIENT_ID"
 Write-Host "UMI Principal ID: $UMI_PRINCIPAL_ID"
@@ -90,7 +90,7 @@ Write-Host "UMI Principal ID: $UMI_PRINCIPAL_ID"
 # Create storage account (no public access, no shared key)
 az storage account create `
     --name $STORAGE_NAME `
-    --resource-group $RG_SRE `
+    --resource-group $RG_SRE_OPS `
     --location $LOCATION `
     --sku Standard_LRS `
     --kind StorageV2 `
@@ -109,7 +109,7 @@ az role assignment create `
     --assignee-object-id $UMI_PRINCIPAL_ID `
     --assignee-principal-type ServicePrincipal `
     --role "Storage Blob Data Reader" `
-    --scope "/subscriptions/$SUB_ID/resourceGroups/$RG_SRE/providers/Microsoft.Storage/storageAccounts/$STORAGE_NAME"
+    --scope "/subscriptions/$SUB_ID/resourceGroups/$RG_SRE_OPS/providers/Microsoft.Storage/storageAccounts/$STORAGE_NAME"
 ```
 
 ### Step 1.5 — Create Integration Subnet (if it doesn't exist)
@@ -145,7 +145,7 @@ az storage account network-rule add `
 # Create App Service plan (B1 is sufficient)
 az appservice plan create `
     --name $FUNC_PLAN `
-    --resource-group $RG_SRE `
+    --resource-group $RG_SRE_OPS `
     --location $LOCATION `
     --sku B1 `
     --is-linux
@@ -153,7 +153,7 @@ az appservice plan create `
 # --- Config Proxy ---
 az functionapp create `
     --name $FUNC_CONFIG `
-    --resource-group $RG_SRE `
+    --resource-group $RG_SRE_OPS `
     --plan $FUNC_PLAN `
     --runtime python `
     --runtime-version 3.11 `
@@ -165,7 +165,7 @@ az functionapp create `
 # --- Command Proxy ---
 az functionapp create `
     --name $FUNC_COMMAND `
-    --resource-group $RG_SRE `
+    --resource-group $RG_SRE_OPS `
     --plan $FUNC_PLAN `
     --runtime python `
     --runtime-version 3.11 `
@@ -188,28 +188,28 @@ Set app settings on both function apps:
 
 ```powershell
 # Config proxy settings
-az functionapp config appsettings set -n $FUNC_CONFIG -g $RG_SRE --settings `
+az functionapp config appsettings set -n $FUNC_CONFIG -g $RG_SRE_OPS --settings `
     AZURE_CLIENT_ID=$UMI_CLIENT_ID `
     STORAGE_ACCOUNT_NAME=$STORAGE_NAME `
     CONTAINER_NAME=$CONTAINER_NAME `
     AGENT_KEY_sre1=$API_KEY
 
 # Command proxy settings
-az functionapp config appsettings set -n $FUNC_COMMAND -g $RG_SRE --settings `
+az functionapp config appsettings set -n $FUNC_COMMAND -g $RG_SRE_OPS --settings `
     AZURE_CLIENT_ID=$UMI_CLIENT_ID `
     SUBSCRIPTION_ID=$SUB_ID `
     AGENT_KEY_sre1=$API_KEY
 
 # Enable AlwaysOn to prevent cold starts
-az functionapp config set -n $FUNC_CONFIG -g $RG_SRE --always-on true
-az functionapp config set -n $FUNC_COMMAND -g $RG_SRE --always-on true
+az functionapp config set -n $FUNC_CONFIG -g $RG_SRE_OPS --always-on true
+az functionapp config set -n $FUNC_COMMAND -g $RG_SRE_OPS --always-on true
 ```
 
 ### Step 1.8 — VNet Integration
 
 ```powershell
-az functionapp vnet-integration add -n $FUNC_CONFIG -g $RG_SRE --vnet $VNET_NAME --subnet $SUBNET_INTEGRATION
-az functionapp vnet-integration add -n $FUNC_COMMAND -g $RG_SRE --vnet $VNET_NAME --subnet $SUBNET_INTEGRATION
+az functionapp vnet-integration add -n $FUNC_CONFIG -g $RG_SRE_OPS --vnet $VNET_NAME --subnet $SUBNET_INTEGRATION
+az functionapp vnet-integration add -n $FUNC_COMMAND -g $RG_SRE_OPS --vnet $VNET_NAME --subnet $SUBNET_INTEGRATION
 ```
 
 ### Step 1.9 — Deploy Function Code
@@ -308,7 +308,7 @@ az role assignment create `
     --assignee-object-id $UMI_PRINCIPAL_ID `
     --assignee-principal-type ServicePrincipal `
     --role "Storage Blob Data Contributor" `
-    --scope "/subscriptions/$SUB_ID/resourceGroups/$RG_SRE/providers/Microsoft.Storage/storageAccounts/$STORAGE_NAME"
+    --scope "/subscriptions/$SUB_ID/resourceGroups/$RG_SRE_OPS/providers/Microsoft.Storage/storageAccounts/$STORAGE_NAME"
 ```
 
 > **Note:** If the storage account firewall is set to Deny, SAP VMs must be in a subnet with a service endpoint or private endpoint to the storage account, OR you add each VM subnet to the storage firewall rules.
@@ -535,7 +535,7 @@ Run these test prompts in the SRE Agent chat to verify each layer:
 
 ### Config proxy returns 401
 - Verify `AGENT_KEY_sre1` app setting matches the API key in Team Onboarding
-- Check function app logs: `az functionapp log tail -n $FUNC_CONFIG -g $RG_SRE`
+- Check function app logs: `az functionapp log tail -n $FUNC_CONFIG -g $RG_SRE_OPS`
 
 ### Config proxy returns 403 / empty results
 - Storage account firewall is blocking. Verify IntegrationSubnet is in the allowed rules
