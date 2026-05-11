@@ -448,26 +448,24 @@ Fill in all values from Phase 1 (subscription ID, storage account name, proxy UR
 
 ### Step 3.4 — Grant Agent MI Read Access
 
-The agent's managed identity needs Reader on SAP resource groups:
+The agent's managed identity needs Reader on each SAP resource group and Log Analytics Reader on the AMS workspace.
 
 ```powershell
 $AGENT_MI_PRINCIPAL = "<agent-mi-principal-id-from-portal>"
 
-# Reader on each SAP resource group
-foreach ($rg in $SAP_RGS) {
-    az role assignment create `
-        --assignee-object-id $AGENT_MI_PRINCIPAL `
-        --assignee-principal-type ServicePrincipal `
-        --role "Reader" `
-        --scope "/subscriptions/$SUB_ID/resourceGroups/$rg"
-}
+# Reader on each SAP resource group (repeat for each RG, in each SAP subscription)
+az role assignment create `
+    --assignee-object-id $AGENT_MI_PRINCIPAL `
+    --assignee-principal-type ServicePrincipal `
+    --role "Reader" `
+    --scope "/subscriptions/<sap-sub>/resourceGroups/<sap-rg>"
 
-# Log Analytics Reader on AMS workspace
+# Log Analytics Reader on AMS workspace (if AMS is configured)
 az role assignment create `
     --assignee-object-id $AGENT_MI_PRINCIPAL `
     --assignee-principal-type ServicePrincipal `
     --role "Log Analytics Reader" `
-    --scope "/subscriptions/$SUB_ID/resourceGroups/$AMS_RG/providers/Microsoft.OperationalInsights/workspaces/$AMS_WORKSPACE"
+    --scope "/subscriptions/<ams-sub>/resourceGroups/<ams-rg>/providers/Microsoft.OperationalInsights/workspaces/<ams-workspace-name>"
 ```
 
 ### Step 3.5 — Connect Knowledge Sources

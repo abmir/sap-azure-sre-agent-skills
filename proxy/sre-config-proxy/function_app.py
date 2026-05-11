@@ -183,7 +183,7 @@ def get_all_configs(req: func.HttpRequest) -> func.HttpResponse:
         )
     except Exception as e:
         logging.error(f"Failed to list/read configs for {sid}/{hostname}: {e}")
-        return func.HttpResponse(json.dumps({"error": str(e)}), status_code=500, mimetype="application/json")
+        return func.HttpResponse(json.dumps({"error": "Failed to read configs"}), status_code=500, mimetype="application/json")
 
 
 @app.route(route="configs/{sid}", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)

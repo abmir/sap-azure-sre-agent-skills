@@ -17,7 +17,7 @@
       "type": "distributed-ha",
       "criticality": "production",
       "resource_group": "RG_SAP_ECP",
-      "managed_resource_group": "mrg-ECP-xxxxx",
+      "managed_rg": "mrg-ECP-xxxxx",
       "vms": [
         {
           "name": "ecpdb01",
