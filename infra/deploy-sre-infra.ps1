@@ -56,14 +56,16 @@ param(
     [Parameter(Mandatory)] [string] $VNetName,
     [Parameter(Mandatory)] [string] $VNetResourceGroup,
     [string] $IntegrationSubnet = "IntegrationSubnet",
-    [string] $IntegrationSubnetCidr
+    [string] $IntegrationSubnetCidr,
+    [string] $ConfigProxyName = "sap-config-proxy",
+    [string] $CommandProxyName = "sap-command-proxy"
 )
 
 $ErrorActionPreference = "Stop"
 $UmiName         = "sre-ops-umi"
 $FuncPlan        = "sre-ops-plan"
-$FuncConfig      = "sap-config-proxy"
-$FuncCommand     = "sap-command-proxy"
+$FuncConfig      = $ConfigProxyName
+$FuncCommand     = $CommandProxyName
 $ContainerName   = "sap-configs"
 
 # --- Colors ---
@@ -91,7 +93,7 @@ Write-Host ""
 # ============================================
 Write-Step "Pre-flight checks"
 
-$azVersion = az version --query '"azure-cli"' -o tsv 2>$null
+$azVersion = (az version -o json 2>$null | ConvertFrom-Json).'azure-cli'
 if (-not $azVersion) { throw "az CLI not found. Install from https://aka.ms/installazurecli" }
 Write-OK "az CLI $azVersion"
 
@@ -272,7 +274,8 @@ az functionapp config appsettings set -n $FuncConfig -g $RG_SRE_OPS --output non
     AGENT_KEY_sre1=$API_KEY
 
 az functionapp config set -n $FuncConfig -g $RG_SRE_OPS --always-on true --output none
-az functionapp vnet-integration add -n $FuncConfig -g $RG_SRE_OPS --vnet $VNetName --subnet $IntegrationSubnet --output none 2>$null
+$vnetId = "/subscriptions/$SubscriptionId/resourceGroups/$VNetResourceGroup/providers/Microsoft.Network/virtualNetworks/$VNetName"
+az functionapp vnet-integration add -n $FuncConfig -g $RG_SRE_OPS --vnet $vnetId --subnet $IntegrationSubnet --output none 2>$null
 Write-OK "$FuncConfig configured (VNet + AlwaysOn + app settings)"
 
 # Command proxy
@@ -282,7 +285,7 @@ az functionapp config appsettings set -n $FuncCommand -g $RG_SRE_OPS --output no
     AGENT_KEY_sre1=$API_KEY
 
 az functionapp config set -n $FuncCommand -g $RG_SRE_OPS --always-on true --output none
-az functionapp vnet-integration add -n $FuncCommand -g $RG_SRE_OPS --vnet $VNetName --subnet $IntegrationSubnet --output none 2>$null
+az functionapp vnet-integration add -n $FuncCommand -g $RG_SRE_OPS --vnet $vnetId --subnet $IntegrationSubnet --output none 2>$null
 Write-OK "$FuncCommand configured (VNet + AlwaysOn + app settings)"
 
 # ============================================
