@@ -26,10 +26,10 @@ This matters for **AAU (Agent Activity Unit) cost optimization**: most user quer
 5. **Set up SAP VM collectors** — deploy `collector/collect-sap-configs.sh` + cron job on each SAP VM
 6. **Create an Azure SRE Agent** at [sre.azure.com](https://sre.azure.com)
 7. **Connect Knowledge Sources** — add this GitHub repo as a Knowledge Source (agent reads configs, inventory, and docs automatically)
-8. **Upload skills** — upload each `SKILL.md` from `skills/` to the agent's **Skill Builder** (one-time manual step, 15 skills)
+8. **Install skills via Plugin Marketplace** — add this repo as a marketplace source, browse all 15 skills, and import with one click. Alternatively, upload each `SKILL.md` from `skills/` to Skill Builder manually.
 9. **Configure Team Onboarding** — fill in `onboarding/team-onboarding.template.md` with your config values and paste into the agent's Team Onboarding
 
-> **Knowledge Sources vs Skills:** The agent reads reference data (inventory, configs, docs) automatically from the connected repo. Skills define agent *behavior* and must be uploaded individually via Skill Builder.
+> **Plugin Marketplace:** This repo includes a `.github/plugin/marketplace.json` manifest. Register it as a [Plugin Marketplace source](https://learn.microsoft.com/en-us/azure/sre-agent/plugin-marketplace) to browse, install, and update all 15 skills with version tracking and SHA-256 content hashing — no manual copy-pasting.
 
 ## Skill Catalog
 

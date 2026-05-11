@@ -1,0 +1,113 @@
+{
+  "name": "SAP Azure SRE Agent Skills",
+  "description": "15 SRE skills for SAP HANA and NetWeaver workloads on Azure. Organized across 4 operational tiers: Observe, Diagnose, Prevent, Heal. Includes secure proxy functions for SAP VM command execution and configuration collection.",
+  "author": "Microsoft SAP SRE",
+  "version": "1.0.0",
+  "plugins": [
+    {
+      "name": "SAP Landscape Discovery",
+      "description": "Discovers SAP system inventory across SIDs, roles, hosts, regions, VM sizes, zones, HA/DR topology, and monitoring coverage. Foundation data for all other skills.",
+      "version": "1.0.0",
+      "skills": ["skills/sap-landscape-discovery/SKILL.md"],
+      "tags": ["sap", "t1-observe", "landscape", "inventory"]
+    },
+    {
+      "name": "SAP Deployment Readiness",
+      "description": "Pre-flight validation for SAP VM deployments. Checks SKU availability, zone support, quota, restrictions, and SAP/HANA certification against SAP Notes.",
+      "version": "1.0.0",
+      "skills": ["skills/sap-deployment-readiness/SKILL.md"],
+      "tags": ["sap", "t1-observe", "deployment", "quota"]
+    },
+    {
+      "name": "SAP Operational Health",
+      "description": "Unified health dashboard. Checks AMS provider health, data freshness, VM power state, CPU/memory/disk metrics, accelerated networking, Resource Health, and alert coverage.",
+      "version": "1.0.0",
+      "skills": ["skills/sap-operational-health/SKILL.md"],
+      "tags": ["sap", "t1-observe", "health", "monitoring"]
+    },
+    {
+      "name": "SAP Performance Diagnostics",
+      "description": "Diagnoses performance issues across HANA database, SAP application, and Azure storage layers. Covers memory pressure, blocking transactions, disk IOPS throttling, and savepoint duration.",
+      "version": "1.0.0",
+      "skills": ["skills/sap-performance-diagnostics/SKILL.md"],
+      "tags": ["sap", "t1-observe", "performance", "hana"]
+    },
+    {
+      "name": "SAP Resiliency Assessment",
+      "description": "Evaluates SAP workload resiliency: availability zone coverage, HA architecture, load balancer redundancy, single points of failure, and zone migration readiness.",
+      "version": "1.0.0",
+      "skills": ["skills/sap-resiliency-assessment/SKILL.md"],
+      "tags": ["sap", "t1-observe", "resiliency", "ha"]
+    },
+    {
+      "name": "SAP Cost Insights",
+      "description": "Analyzes Azure costs for SAP systems. Per-system cost breakdown, RI coverage, deallocated VM savings, and agent operating cost.",
+      "version": "1.0.0",
+      "skills": ["skills/sap-cost-insights/SKILL.md"],
+      "tags": ["sap", "t1-observe", "cost", "finops"]
+    },
+    {
+      "name": "SAP Incident RCA",
+      "description": "Cross-layer root cause analysis. Correlates Azure infrastructure, Guest OS, Pacemaker, HANA, and SAP application evidence. Conditional ServiceNow and Grafana enrichment.",
+      "version": "1.0.0",
+      "skills": ["skills/sap-incident-rca/SKILL.md"],
+      "tags": ["sap", "t2-diagnose", "rca", "incident"]
+    },
+    {
+      "name": "SAP Configuration Guardian",
+      "description": "59 configuration checks aligned with STAF across infrastructure, storage, OS/SAP parameters, and cluster. T1 mode: audit. T3 mode: detect drift, recommend fix, apply on approval.",
+      "version": "1.0.0",
+      "skills": ["skills/sap-configuration-guardian/SKILL.md"],
+      "tags": ["sap", "t1-observe", "t3-prevent", "configuration", "staf"]
+    },
+    {
+      "name": "SAP HA & DR Guardian",
+      "description": "Unified HA and DR health. Evaluates Pacemaker cluster, HSR replication, takeover readiness, and failover forensics. T3 mode: alert on SFAIL/quorum loss with approval gate.",
+      "version": "1.0.0",
+      "skills": ["skills/sap-ha-dr-guardian/SKILL.md"],
+      "tags": ["sap", "t1-observe", "t3-prevent", "ha", "pacemaker", "hsr"]
+    },
+    {
+      "name": "SAP Anomaly Forecaster",
+      "description": "Trend analysis on HANA memory, disk, CPU, and replication lag. Projects resource exhaustion via linear regression. Sends approval card with recommended action.",
+      "version": "1.0.0",
+      "skills": ["skills/sap-anomaly-forecaster/SKILL.md"],
+      "tags": ["sap", "t3-prevent", "anomaly", "forecasting"]
+    },
+    {
+      "name": "SAP Maintenance Autopilot",
+      "description": "Handles Azure scheduled maintenance autonomously. Graceful SAP shutdown, HSR takeover for HA systems, event acknowledgment, restart monitoring, and recovery validation.",
+      "version": "1.0.0",
+      "skills": ["skills/sap-maintenance-autopilot/SKILL.md"],
+      "tags": ["sap", "t4-heal", "maintenance", "autonomous"]
+    },
+    {
+      "name": "SAP Self-Healing",
+      "description": "Handles time-critical scenarios: log volume full, backup staleness, sysctl drift after reboots. Fixed allowlist of actions, rate-limited to 20 actions/day.",
+      "version": "1.0.0",
+      "skills": ["skills/sap-self-healing/SKILL.md"],
+      "tags": ["sap", "t4-heal", "self-healing", "autonomous"]
+    },
+    {
+      "name": "SAP Command Executor",
+      "description": "Executes 14 allowlisted read-only commands on SAP VMs via secure command proxy. The only skill with proxy credentials. Used directly and invoked by other skills.",
+      "version": "1.0.0",
+      "skills": ["skills/sap-command-executor/SKILL.md"],
+      "tags": ["sap", "agent-internal", "command", "proxy"]
+    },
+    {
+      "name": "SAP ServiceNow Connector",
+      "description": "Conditional ServiceNow REST API integration. Queries change records, incident history, KB articles. Creates/updates incidents with structured RCA data. Agent-internal only.",
+      "version": "1.0.0",
+      "skills": ["skills/sap-servicenow-connector/SKILL.md"],
+      "tags": ["sap", "agent-internal", "servicenow", "itsm"]
+    },
+    {
+      "name": "SAP APM Connector",
+      "description": "Connects to Dynatrace, SAP Focus Run, or AppDynamics via Grafana for deep HANA telemetry. Enriches RCA and Anomaly Forecaster. Agent-internal only.",
+      "version": "1.0.0",
+      "skills": ["skills/sap-apm-connector/SKILL.md"],
+      "tags": ["sap", "agent-internal", "apm", "dynatrace", "grafana"]
+    }
+  ]
+}

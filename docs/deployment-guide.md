@@ -461,11 +461,23 @@ The agent reads reference data (configs, inventory, docs) automatically from con
 
 > **Why connect the repo?** When you update the landscape inventory or config files in Git, the agent picks up changes automatically — no manual re-upload needed.
 
-### Step 3.6 — Upload Skills (One-Time Manual Step)
+### Step 3.6 — Install Skills via Plugin Marketplace (Recommended)
 
-Skills define agent *behavior* (what it can do, what tools it calls, how it reasons). These must be uploaded individually via **Skill Builder** — the agent does not auto-discover them from the repo.
+This repo includes a Plugin Marketplace manifest (`.github/plugin/marketplace.json`). This is the fastest way to install all 15 skills.
 
-In the SRE Agent portal, go to **Skill Builder** and create a new skill for each file:
+1. In the agent portal, go to **Plugin Marketplace**
+2. Select **Add marketplace source** → paste this repo URL
+3. Browse the catalog — all 15 skills appear with descriptions, tags, and previews
+4. Select the skills you want (or **Select All**) → click **Import selected**
+5. Skills are created in your agent immediately
+
+**Updating skills later:** Click **Check for updates** on any installed plugin. The marketplace compares SHA-256 content hashes and shows a side-by-side diff before applying changes.
+
+> **Learn more:** [Plugin Marketplace documentation](https://learn.microsoft.com/en-us/azure/sre-agent/plugin-marketplace)
+
+### Step 3.6b — Manual Upload (Alternative)
+
+If the Plugin Marketplace is not available in your environment, upload skills manually via **Skill Builder**:
 
 | # | Skill File | Skill Name |
 |---|-----------|------------|
@@ -486,8 +498,6 @@ In the SRE Agent portal, go to **Skill Builder** and create a new skill for each
 | 15 | `skills/sap-apm-connector/SKILL.md` | SAP APM Connector |
 
 For each skill: create a new skill in Skill Builder → paste the content of the SKILL.md file → save.
-
-> **Tip:** Skills only need to be uploaded once. After initial setup, you update them in the portal if behavior changes — the repo copy serves as the source-of-truth for version control.
 
 ### Step 3.7 — Configure Team Onboarding
 
