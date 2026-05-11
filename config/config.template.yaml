@@ -94,4 +94,4 @@ agent:
 # ============================================
 sre_ops:
   resource_group: ""                    # RG containing proxy functions and storage (e.g., "RG_SRE_OPS")
-  managed_identity_name: ""            # UMI for proxy functions (e.g., "sre-ops-mi")
+  managed_identity_name: ""            # UMI for proxy functions (e.g., "sre-ops-umi")

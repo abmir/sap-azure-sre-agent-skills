@@ -141,4 +141,4 @@ agent:
 # ============================================
 sre_ops:
   resource_group: "RG_SRE_OPS"
-  managed_identity_name: "sre-ops-mi"
+  managed_identity_name: "sre-ops-umi"

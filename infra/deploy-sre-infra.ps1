@@ -65,7 +65,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$UmiName         = "sre-ops-mi"
+$UmiName         = "sre-ops-umi"
 $FuncPlan        = "sre-ops-plan"
 $FuncConfig      = "sap-config-proxy"
 $FuncCommand     = "sap-command-proxy"

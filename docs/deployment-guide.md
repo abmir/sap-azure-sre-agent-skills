@@ -47,7 +47,7 @@ $TENANT_ID      = "<your-tenant-id>"
 $LOCATION       = "centralus"                    # Region where SAP runs
 $RG_SRE_OPS         = "RG_SRE_OPS"                   # Resource group for SRE components
 $STORAGE_NAME   = "stsreconfigs$(Get-Random -Max 999)"  # Must be globally unique
-$UMI_NAME       = "sre-ops-mi"                   # Managed identity for proxies + collector
+$UMI_NAME       = "sre-ops-umi"                   # User-assigned managed identity for proxies + collector
 $FUNC_PLAN      = "sre-ops-plan"                  # App Service plan (shared by both functions)
 $FUNC_CONFIG     = "sap-config-proxy"             # Config proxy function app name
 $FUNC_COMMAND    = "sap-command-proxy"            # Command proxy function app name
@@ -630,7 +630,7 @@ Use the same values from your original deployment:
 ```powershell
 $SUB_ID         = "<your-subscription-id>"
 $RG_SRE_OPS     = "RG_SRE_OPS"
-$UMI_NAME       = "sre-ops-mi"
+$UMI_NAME       = "sre-ops-umi"
 $VNET_NAME      = "<your-sap-vnet-name>"
 $VNET_RG        = "<your-vnet-resource-group>"
 $SUBNET_NAME    = "IntegrationSubnet"
@@ -687,7 +687,7 @@ foreach ($rg in $SAP_RGS) {
         if ($identities -and $identities -ne "null") {
             $count = ($identities | ConvertFrom-Json).PSObject.Properties.Count
             if ($count -gt 1) {
-                Write-Host "WARNING: $vm has $count user-assigned identities — only removing sre-ops-mi" -ForegroundColor Yellow
+                Write-Host "WARNING: $vm has $count user-assigned identities — only removing sre-ops-umi" -ForegroundColor Yellow
             }
             az vm identity remove -g $rg -n $vm --identities $UMI_ID 2>$null
             Write-Host "Removed UMI from $vm"
