@@ -96,10 +96,87 @@ This matters for **AAU (Agent Activity Unit) cost optimization**: most user quer
 
 ## Prerequisites
 
-- Azure subscription with SAP workloads (HANA, NetWeaver)
-- Azure Monitor for SAP Solutions (AMS) configured
-- Azure SRE Agent (created at sre.azure.com)
-- Two Azure Function Apps (config-proxy + command-proxy) deployed
+- Azure subscription with **existing SAP workloads** (HANA, NetWeaver) already deployed on Azure VMs
+- Azure Monitor for SAP Solutions (AMS) configured with HANA provider(s)
+- Hub/shared services VNet with IntegrationSubnet (delegated to Microsoft.Web/serverFarms)
+- VNet connectivity from IntegrationSubnet to SAP VM subnets (same VNet or peered)
+
+> **This solution does NOT deploy SAP.** It monitors and manages existing SAP systems. You need working SAP VMs with HANA running before setting up the SRE Agent.
+
+## What Gets Created
+
+The deploy script (`infra/deploy-sre-infra.ps1`) creates everything in **one resource group**:
+
+```
+RG_SRE_OPS (created by deploy script)
+├── sre-ops-umi              User-Assigned Managed Identity (one identity for everything)
+├── <storage-account>        Storage Account (SAP config snapshots, shared key disabled)
+├── sre-ops-plan             App Service Plan (B1 Linux)
+├── <config-proxy>           Function App (reads SAP configs from blob storage)
+├── <command-proxy>          Function App (executes allowlisted commands on SAP VMs)
+└── 2x Application Insights  Auto-created with each function app
+```
+
+**Additionally created by sre.azure.com (separate RG, auto-managed):**
+
+```
+RG_SAP_SRE_Agent (auto-created by Azure SRE Agent platform)
+├── <agent-name>             Azure SRE Agent instance
+├── <agent-mi>               Agent Managed Identity (for Azure API calls)
+├── <agent-app-insights>     Application Insights
+├── <agent-workspace>        Log Analytics Workspace
+└── API Connections           Teams, Office365 (if configured)
+```
+
+## Identity & Networking
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Identities (just two)                                           │
+│                                                                 │
+│  sre-ops-umi (UMI)          → Function apps use this for:      │
+│    ├─ AzureWebJobsStorage     (runtime storage, identity-based) │
+│    ├─ Blob read/write         (config proxy reads, VMs upload)  │
+│    ├─ VM Run Command          (command proxy executes commands)  │
+│    └─ ARM API calls           (DefaultAzureCredential)          │
+│                                                                 │
+│  agent-mi (auto-created)    → SRE Agent uses this for:         │
+│    ├─ Azure Monitor/AMS       (KQL queries)                     │
+│    ├─ ARM Resource Graph      (VM discovery)                    │
+│    └─ Cost Management         (cost analysis)                   │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│ Network Requirements                                            │
+│                                                                 │
+│  IntegrationSubnet (/26+)   → Function apps VNet integration   │
+│    ├─ Delegated to Microsoft.Web/serverFarms                    │
+│    ├─ Added to storage account firewall rules                   │
+│    └─ Must reach SAP VM subnets (same VNet or peered)           │
+│                                                                 │
+│  SAP VM Subnets             → Where SAP VMs run                │
+│    ├─ Added to storage account firewall (for collector upload)  │
+│    └─ NSG must allow outbound to Azure (IMDS, ARM, storage)    │
+│                                                                 │
+│  Storage Account            → Firewall: Deny by default        │
+│    ├─ IntegrationSubnet allowed                                 │
+│    ├─ SAP VM subnets allowed                                   │
+│    └─ No public access, no shared key                          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## RBAC Requirements
+
+| Identity | Role | Scope | Purpose |
+|----------|------|-------|---------|
+| sre-ops-umi | Storage Blob Data Owner | Storage account | AzureWebJobsStorage + config read/write |
+| sre-ops-umi | Storage Queue Data Contributor | Storage account | AzureWebJobsStorage runtime |
+| sre-ops-umi | Storage Table Data Contributor | Storage account | AzureWebJobsStorage runtime |
+| sre-ops-umi | Storage Blob Data Contributor | Storage account | Collector VM uploads |
+| sre-ops-umi | Virtual Machine Contributor | Each SAP RG | VM Run Command execution |
+| sre-ops-umi | Reader | Each SAP RG | VM discovery |
+| agent-mi | Reader | Each SAP RG | Azure Resource Graph queries |
+| agent-mi | Log Analytics Reader | AMS workspace | KQL queries for HANA/SAP data |
 
 > **Full step-by-step setup:** See [docs/deployment-guide.md](docs/deployment-guide.md) for infrastructure setup, SAP VM collector, and agent configuration.
 
