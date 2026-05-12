@@ -286,22 +286,11 @@ foreach ($funcName in @($FuncConfig, $FuncCommand)) {
     }
 }
 
-# Assign System MI + UMI to each function app (required for identity-based AzureWebJobsStorage)
+# Assign UMI to each function app
 foreach ($funcName in @($FuncConfig, $FuncCommand)) {
-    az functionapp identity assign -n $funcName -g $RG_SRE_OPS -o none
     az functionapp identity assign -n $funcName -g $RG_SRE_OPS --identities $UMI_ID -o none 2>$null
 }
-Write-OK "System MI + UMI assigned to both function apps"
-
-# Grant System MI storage roles (needed for AzureWebJobsStorage identity-based auth)
-$stScope = "/subscriptions/$SubscriptionId/resourceGroups/$RG_SRE_OPS/providers/Microsoft.Storage/storageAccounts/$StorageAccountName"
-foreach ($funcName in @($FuncConfig, $FuncCommand)) {
-    $smiPrincipal = az functionapp identity show -n $funcName -g $RG_SRE_OPS --query principalId -o tsv
-    az role assignment create --assignee-object-id $smiPrincipal --assignee-principal-type ServicePrincipal --role "Storage Blob Data Owner" --scope $stScope -o none 2>$null
-    az role assignment create --assignee-object-id $smiPrincipal --assignee-principal-type ServicePrincipal --role "Storage Queue Data Contributor" --scope $stScope -o none 2>$null
-    az role assignment create --assignee-object-id $smiPrincipal --assignee-principal-type ServicePrincipal --role "Storage Table Data Contributor" --scope $stScope -o none 2>$null
-}
-Write-OK "System MI storage roles assigned"
+Write-OK "UMI assigned to both function apps"
 
 # ============================================
 # Step 8: Function App Settings + VNet Integration
@@ -317,6 +306,7 @@ foreach ($funcName in @($FuncConfig, $FuncCommand)) {
         AzureWebJobsStorage__queueServiceUri=https://$StorageAccountName.queue.core.windows.net `
         AzureWebJobsStorage__tableServiceUri=https://$StorageAccountName.table.core.windows.net `
         AzureWebJobsStorage__credential=managedidentity `
+        AzureWebJobsStorage__clientId=$UMI_CLIENT_ID `
         AzureWebJobsSecretStorageType=files
 }
 Write-OK "Identity-based AzureWebJobsStorage configured (shared key disabled)"
