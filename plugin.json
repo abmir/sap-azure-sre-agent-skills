@@ -1,0 +1,6 @@
+{
+  "name": "sap-azure-sre-agent-skills",
+  "description": "15 SRE skills for SAP HANA and NetWeaver workloads on Azure. Organized across 4 operational tiers: Observe, Diagnose, Prevent, Heal.",
+  "license": "MIT",
+  "skills": ["skills/"]
+}
