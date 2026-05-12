@@ -1,306 +1,124 @@
 <#
 .SYNOPSIS
-    SAP SRE Agent — Automated Infrastructure Deployment
-    Deploys all Azure resources needed for the SRE Agent in a single run.
+    SAP SRE Agent — Infrastructure Deployment
 
 .DESCRIPTION
-    Creates: Resource Group, Storage Account, Managed Identity, Function Apps,
-    RBAC assignments, VNet integration, custom VM Run Command role.
-    
-    After running this script, you only need to:
-    1. Deploy function code (func azure functionapp publish)
-    2. Assign RBAC on SAP resource groups (see deployment guide Step 1.10)
-    3. Deploy collector script to SAP VMs
-    4. Create the SRE Agent at sre.azure.com and install skills
+    Creates RG_SRE_OPS with: Storage Account, Managed Identity, 2 Function Apps.
+    After running: deploy function code, assign RBAC on SAP RGs, deploy collector.
 
 .PARAMETER SubscriptionId
-    Shared services subscription ID where RG_SRE_OPS will be created.
-
-.PARAMETER Location
-    Azure region (e.g., centralus, eastus2). Should match SAP VM region.
-
-.PARAMETER RG_SRE_OPS
-    Resource group name for SRE operations components.
+    Subscription where RG_SRE_OPS will be created.
 
 .PARAMETER StorageAccountName
-    Globally unique storage account name for SAP configs.
+    Globally unique storage account name for SAP config snapshots.
 
-.PARAMETER VNetName
-    Name of the hub/shared services VNet (peered to SAP spoke VNets).
+.PARAMETER IntegrationSubnetId
+    Full resource ID of the subnet for function app VNet integration.
+    Must be delegated to Microsoft.Web/serverFarms.
+    Example: /subscriptions/.../resourceGroups/.../providers/Microsoft.Network/virtualNetworks/.../subnets/IntegrationSubnet
 
-.PARAMETER VNetResourceGroup
-    Resource group containing the hub VNet.
+.PARAMETER ConfigProxyName
+    Function app name for config proxy. Must be globally unique. Default: sap-config-proxy
 
-.PARAMETER IntegrationSubnet
-    Subnet for function app VNet integration (created if it doesn't exist).
-
-.PARAMETER IntegrationSubnetCidr
-    CIDR for the integration subnet if it needs to be created (e.g., 10.40.1.0/26).
+.PARAMETER CommandProxyName
+    Function app name for command proxy. Must be globally unique. Default: sap-command-proxy
 
 .EXAMPLE
     .\deploy-sre-infra.ps1 `
-        -SubscriptionId "12345678-1234-1234-1234-123456789012" `
-        -Location "centralus" `
+        -SubscriptionId "12345678-..." `
         -StorageAccountName "stsreconfigs001" `
-        -VNetName "Hub-VNet" `
-        -VNetResourceGroup "RG_SharedServices" `
-        -IntegrationSubnet "IntegrationSubnet" `
-        -IntegrationSubnetCidr "10.40.1.0/26"
+        -IntegrationSubnetId "/subscriptions/.../resourceGroups/RG_Network/providers/Microsoft.Network/virtualNetworks/VNET_SAP/subnets/IntegrationSubnet"
 #>
 
 param(
     [Parameter(Mandatory)] [string] $SubscriptionId,
-    [Parameter(Mandatory)] [string] $Location,
-    [string] $RG_SRE_OPS = "RG_SRE_OPS",
     [Parameter(Mandatory)] [string] $StorageAccountName,
-    [Parameter(Mandatory)] [string] $VNetName,
-    [Parameter(Mandatory)] [string] $VNetResourceGroup,
-    [string] $IntegrationSubnet = "IntegrationSubnet",
-    [string] $IntegrationSubnetCidr,
+    [Parameter(Mandatory)] [string] $IntegrationSubnetId,
     [string] $ConfigProxyName = "sap-config-proxy",
     [string] $CommandProxyName = "sap-command-proxy"
 )
 
 $ErrorActionPreference = "Stop"
-$UmiName         = "sre-ops-umi"
-$FuncPlan        = "sre-ops-plan"
-$FuncConfig      = $ConfigProxyName
-$FuncCommand     = $CommandProxyName
-$ContainerName   = "sap-configs"
+$RG         = "RG_SRE_OPS"
+$UmiName    = "sre-ops-umi"
+$Plan       = "sre-ops-plan"
+$Container  = "sap-configs"
+$Location   = "centralus"
+$CollectorScript = Join-Path $PSScriptRoot "..\collector\collect-sap-configs.sh"
+$VNetId     = $IntegrationSubnetId -replace '/subnets/.*$', ''
+$SubnetName = $IntegrationSubnetId.Split("/")[-1]
 
-# --- Colors ---
 function Write-Step  { param($msg) Write-Host "`n>> $msg" -ForegroundColor Cyan }
 function Write-OK    { param($msg) Write-Host "   OK: $msg" -ForegroundColor Green }
-function Write-Skip  { param($msg) Write-Host "   SKIP: $msg" -ForegroundColor Yellow }
-function Write-Fail  { param($msg) Write-Host "   FAIL: $msg" -ForegroundColor Red }
 
-# ============================================
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host " SAP SRE Agent — Infrastructure Deployment" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
+Write-Host "  Subscription: $SubscriptionId"
+Write-Host "  Storage:      $StorageAccountName"
+Write-Host "  Subnet:       $IntegrationSubnetId"
 Write-Host ""
-Write-Host "Subscription:    $SubscriptionId"
-Write-Host "Location:        $Location"
-Write-Host "SRE RG:          $RG_SRE_OPS"
-Write-Host "Storage:         $StorageAccountName"
-Write-Host "VNet:            $VNetName ($VNetResourceGroup)"
-Write-Host "Subnet:          $IntegrationSubnet"
-Write-Host ""
-
-# ============================================
-# Pre-flight checks
-# ============================================
-Write-Step "Pre-flight checks"
 
 $azVersion = (az version -o json 2>$null | ConvertFrom-Json).'azure-cli'
-if (-not $azVersion) { throw "az CLI not found. Install from https://aka.ms/installazurecli" }
-Write-OK "az CLI $azVersion"
-
+if (-not $azVersion) { throw "az CLI not found" }
 az account set --subscription $SubscriptionId
-Write-OK "Subscription set to $SubscriptionId"
 
-# Check if func CLI is available (needed later for code deployment)
-$funcAvail = Get-Command func -ErrorAction SilentlyContinue
-if (-not $funcAvail) { Write-Skip "Azure Functions Core Tools not found — you'll need them for code deployment" }
-else { Write-OK "func CLI available" }
-
-# ============================================
 # Step 1: Resource Group
-# ============================================
-Write-Step "Step 1/10 — Resource Group"
-$rgExists = az group exists --name $RG_SRE_OPS 2>$null
-if ($rgExists -eq "true") {
-    Write-Skip "$RG_SRE_OPS already exists"
-} else {
-    az group create --name $RG_SRE_OPS --location $Location --output none
-    Write-OK "Created $RG_SRE_OPS"
+Write-Step "Step 1/7 — Resource Group"
+az group create --name $RG --location $Location --output none 2>$null
+Write-OK "$RG"
+
+# Step 2: Managed Identity
+Write-Step "Step 2/7 — Managed Identity"
+az identity create --name $UmiName -g $RG --location $Location --output none 2>$null
+$UMI_ID = az identity show -n $UmiName -g $RG --query id -o tsv
+$UMI_CLIENT_ID = az identity show -n $UmiName -g $RG --query clientId -o tsv
+$UMI_PRINCIPAL_ID = az identity show -n $UmiName -g $RG --query principalId -o tsv
+Write-OK "$UmiName (Client ID: $UMI_CLIENT_ID)"
+
+# Step 3: Storage Account + Collector Upload
+Write-Step "Step 3/7 — Storage Account"
+az storage account create --name $StorageAccountName -g $RG -l $Location --sku Standard_LRS --kind StorageV2 --allow-shared-key-access false --default-action Deny --min-tls-version TLS1_2 --output none 2>$null
+az storage container create --name $Container --account-name $StorageAccountName --auth-mode login --output none 2>$null
+Write-OK "$StorageAccountName (container: $Container)"
+
+# Storage RBAC for UMI
+$stScope = "/subscriptions/$SubscriptionId/resourceGroups/$RG/providers/Microsoft.Storage/storageAccounts/$StorageAccountName"
+foreach ($role in @("Storage Blob Data Owner", "Storage Blob Data Contributor", "Storage Queue Data Contributor", "Storage Table Data Contributor")) {
+    az role assignment create --assignee-object-id $UMI_PRINCIPAL_ID --assignee-principal-type ServicePrincipal --role $role --scope $stScope --output none 2>$null
+}
+Write-OK "Storage roles assigned"
+
+# Storage firewall
+az storage account network-rule add --account-name $StorageAccountName --subnet $IntegrationSubnetId --output none 2>$null
+Write-OK "Storage firewall: IntegrationSubnet allowed"
+
+# Upload collector script
+if (Test-Path $CollectorScript) {
+    az storage blob upload --account-name $StorageAccountName --container-name $Container --name scripts/collect-sap-configs.sh --file $CollectorScript --auth-mode login --overwrite --output none 2>$null
+    Write-OK "Collector script uploaded to $Container/scripts/"
 }
 
-# ============================================
-# Step 2: User-Assigned Managed Identity
-# ============================================
-Write-Step "Step 2/10 — Managed Identity"
-$umiExists = az identity show -n $UmiName -g $RG_SRE_OPS --query id -o tsv 2>$null
-if ($umiExists) {
-    Write-Skip "$UmiName already exists"
-} else {
-    az identity create --name $UmiName --resource-group $RG_SRE_OPS --location $Location --output none
-    Write-OK "Created $UmiName"
-}
+# Step 4: App Service Plan
+Write-Step "Step 4/7 — App Service Plan"
+az appservice plan create --name $Plan -g $RG -l $Location --sku B1 --is-linux --output none 2>$null
+Write-OK "$Plan (B1 Linux)"
 
-$UMI_ID = az identity show -n $UmiName -g $RG_SRE_OPS --query id -o tsv
-$UMI_CLIENT_ID = az identity show -n $UmiName -g $RG_SRE_OPS --query clientId -o tsv
-$UMI_PRINCIPAL_ID = az identity show -n $UmiName -g $RG_SRE_OPS --query principalId -o tsv
-Write-OK "UMI Client ID: $UMI_CLIENT_ID"
-
-# ============================================
-# Step 3: Storage Account
-# ============================================
-Write-Step "Step 3/10 — Storage Account"
-$stExists = az storage account show --name $StorageAccountName -g $RG_SRE_OPS --query id -o tsv 2>$null
-if ($stExists) {
-    Write-Skip "$StorageAccountName already exists"
-} else {
-    az storage account create `
-        --name $StorageAccountName `
-        --resource-group $RG_SRE_OPS `
-        --location $Location `
-        --sku Standard_LRS `
-        --kind StorageV2 `
-        --allow-shared-key-access false `
-        --default-action Deny `
-        --min-tls-version TLS1_2 `
-        --output none
-    Write-OK "Created $StorageAccountName (firewall: Deny, shared key: disabled)"
-}
-
-# Create container
-$containerExists = az storage container exists --name $ContainerName --account-name $StorageAccountName --auth-mode login --query exists -o tsv 2>$null
-if ($containerExists -eq "true") {
-    Write-Skip "Container $ContainerName already exists"
-} else {
-    az storage container create --name $ContainerName --account-name $StorageAccountName --auth-mode login --output none
-    Write-OK "Created container $ContainerName"
-}
-
-# ============================================
-# Step 4: Storage RBAC
-# ============================================
-Write-Step "Step 4/10 — Storage RBAC"
-$stScope = "/subscriptions/$SubscriptionId/resourceGroups/$RG_SRE_OPS/providers/Microsoft.Storage/storageAccounts/$StorageAccountName"
-
-# Blob Data Reader (for config proxy to read)
-az role assignment create `
-    --assignee-object-id $UMI_PRINCIPAL_ID `
-    --assignee-principal-type ServicePrincipal `
-    --role "Storage Blob Data Reader" `
-    --scope $stScope `
-    --output none 2>$null
-Write-OK "Storage Blob Data Reader assigned"
-
-# Blob Data Contributor (for collector VMs to upload)
-az role assignment create `
-    --assignee-object-id $UMI_PRINCIPAL_ID `
-    --assignee-principal-type ServicePrincipal `
-    --role "Storage Blob Data Contributor" `
-    --scope $stScope `
-    --output none 2>$null
-Write-OK "Storage Blob Data Contributor assigned"
-
-# Identity-based AzureWebJobsStorage requires these roles on the UMI
-az role assignment create `
-    --assignee-object-id $UMI_PRINCIPAL_ID `
-    --assignee-principal-type ServicePrincipal `
-    --role "Storage Blob Data Owner" `
-    --scope $stScope `
-    --output none 2>$null
-Write-OK "Storage Blob Data Owner assigned (for AzureWebJobsStorage)"
-
-az role assignment create `
-    --assignee-object-id $UMI_PRINCIPAL_ID `
-    --assignee-principal-type ServicePrincipal `
-    --role "Storage Queue Data Contributor" `
-    --scope $stScope `
-    --output none 2>$null
-Write-OK "Storage Queue Data Contributor assigned"
-
-az role assignment create `
-    --assignee-object-id $UMI_PRINCIPAL_ID `
-    --assignee-principal-type ServicePrincipal `
-    --role "Storage Table Data Contributor" `
-    --scope $stScope `
-    --output none 2>$null
-Write-OK "Storage Table Data Contributor assigned"
-
-# ============================================
-# Step 5: Integration Subnet
-# ============================================
-Write-Step "Step 5/10 — Integration Subnet"
-$subnetExists = az network vnet subnet show --vnet-name $VNetName -g $VNetResourceGroup -n $IntegrationSubnet --query id -o tsv 2>$null
-if ($subnetExists) {
-    Write-Skip "$IntegrationSubnet already exists"
-} else {
-    if (-not $IntegrationSubnetCidr) {
-        throw "IntegrationSubnetCidr is required when the subnet doesn't exist. Specify a free /26 CIDR range."
-    }
-    az network vnet subnet create `
-        --vnet-name $VNetName `
-        --resource-group $VNetResourceGroup `
-        --name $IntegrationSubnet `
-        --address-prefixes $IntegrationSubnetCidr `
-        --delegations "Microsoft.Web/serverFarms" `
-        --output none
-    Write-OK "Created $IntegrationSubnet ($IntegrationSubnetCidr)"
-}
-
-$SUBNET_ID = az network vnet subnet show --vnet-name $VNetName -g $VNetResourceGroup -n $IntegrationSubnet --query id -o tsv
-
-# Add subnet to storage firewall
-az storage account network-rule add --account-name $StorageAccountName --subnet $SUBNET_ID --output none 2>$null
-Write-OK "Storage firewall: added $IntegrationSubnet"
-
-# ============================================
-# Step 6: App Service Plan
-# ============================================
-Write-Step "Step 6/10 — App Service Plan"
-$planExists = az appservice plan show -n $FuncPlan -g $RG_SRE_OPS --query id -o tsv 2>$null
-if ($planExists) {
-    Write-Skip "$FuncPlan already exists"
-} else {
-    az appservice plan create `
-        --name $FuncPlan `
-        --resource-group $RG_SRE_OPS `
-        --location $Location `
-        --sku B1 `
-        --is-linux `
-        --output none
-    Write-OK "Created $FuncPlan (B1 Linux)"
-}
-
-# ============================================
-# Step 7: Function Apps
-# ============================================
-Write-Step "Step 7/10 — Function Apps"
-
-# Generate API key
+# Step 5: Function Apps
+Write-Step "Step 5/7 — Function Apps"
 $API_KEY = [guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N").Substring(0,16)
-
-foreach ($funcName in @($FuncConfig, $FuncCommand)) {
-    $funcExists = az functionapp show -n $funcName -g $RG_SRE_OPS --query id -o tsv 2>$null
-    if ($funcExists) {
-        Write-Skip "$funcName already exists"
-    } else {
-        az functionapp create `
-            --name $funcName `
-            --resource-group $RG_SRE_OPS `
-            --plan $FuncPlan `
-            --runtime python `
-            --runtime-version 3.11 `
-            --functions-version 4 `
-            --os-type Linux `
-            --assign-identity $UMI_ID `
-            --storage-account $StorageAccountName `
-            --output none
-        Write-OK "Created $funcName"
-    }
+foreach ($fn in @($ConfigProxyName, $CommandProxyName)) {
+    az functionapp create --name $fn -g $RG --plan $Plan --runtime python --runtime-version 3.11 --functions-version 4 --os-type Linux --storage-account $StorageAccountName --output none 2>$null
+    Write-OK "Created $fn"
 }
 
-# Assign UMI to each function app
-foreach ($funcName in @($FuncConfig, $FuncCommand)) {
-    az functionapp identity assign -n $funcName -g $RG_SRE_OPS --identities $UMI_ID -o none 2>$null
-}
-Write-OK "UMI assigned to both function apps"
-
-# ============================================
-# Step 8: Function App Settings + VNet Integration
-# ============================================
-Write-Step "Step 8/10 — Function App Configuration"
-
-# Identity-based AzureWebJobsStorage (shared key disabled on storage account)
-foreach ($funcName in @($FuncConfig, $FuncCommand)) {
-    az functionapp config appsettings delete -n $funcName -g $RG_SRE_OPS --setting-names AzureWebJobsStorage -o none 2>$null
-    az functionapp config appsettings set -n $funcName -g $RG_SRE_OPS --output none --settings `
+# Step 6: Configure
+Write-Step "Step 6/7 — Configuration"
+foreach ($fn in @($ConfigProxyName, $CommandProxyName)) {
+    az functionapp identity assign -n $fn -g $RG --identities $UMI_ID -o none 2>$null
+    az functionapp config appsettings delete -n $fn -g $RG --setting-names AzureWebJobsStorage -o none 2>$null
+    az functionapp config appsettings set -n $fn -g $RG --output none --settings `
         AzureWebJobsStorage__accountName=$StorageAccountName `
         AzureWebJobsStorage__blobServiceUri=https://$StorageAccountName.blob.core.windows.net `
         AzureWebJobsStorage__queueServiceUri=https://$StorageAccountName.queue.core.windows.net `
@@ -308,70 +126,32 @@ foreach ($funcName in @($FuncConfig, $FuncCommand)) {
         AzureWebJobsStorage__credential=managedidentity `
         AzureWebJobsStorage__clientId=$UMI_CLIENT_ID `
         AzureWebJobsSecretStorageType=files
+    az functionapp config set -n $fn -g $RG --always-on true --output none
+    az functionapp vnet-integration add -n $fn -g $RG --vnet $VNetId --subnet $SubnetName --output none 2>$null
 }
-Write-OK "Identity-based AzureWebJobsStorage configured (shared key disabled)"
 
-# Config proxy app settings
-az functionapp config appsettings set -n $FuncConfig -g $RG_SRE_OPS --output none --settings `
-    AZURE_CLIENT_ID=$UMI_CLIENT_ID `
-    STORAGE_ACCOUNT_NAME=$StorageAccountName `
-    CONTAINER_NAME=$ContainerName `
-    AGENT_KEY_sre1=$API_KEY
+az functionapp config appsettings set -n $ConfigProxyName -g $RG --output none --settings AZURE_CLIENT_ID=$UMI_CLIENT_ID STORAGE_ACCOUNT_NAME=$StorageAccountName CONTAINER_NAME=$Container AGENT_KEY_sre1=$API_KEY
+az functionapp config appsettings set -n $CommandProxyName -g $RG --output none --settings AZURE_CLIENT_ID=$UMI_CLIENT_ID AGENT_KEY_sre1=$API_KEY
+Write-OK "Both function apps configured"
 
-az functionapp config set -n $FuncConfig -g $RG_SRE_OPS --always-on true --output none
-$vnetId = "/subscriptions/$SubscriptionId/resourceGroups/$VNetResourceGroup/providers/Microsoft.Network/virtualNetworks/$VNetName"
-az functionapp vnet-integration add -n $FuncConfig -g $RG_SRE_OPS --vnet $vnetId --subnet $IntegrationSubnet --output none 2>$null
-Write-OK "$FuncConfig configured (VNet + AlwaysOn + app settings)"
-
-# Command proxy
-az functionapp config appsettings set -n $FuncCommand -g $RG_SRE_OPS --output none --settings `
-    AZURE_CLIENT_ID=$UMI_CLIENT_ID `
-    SUBSCRIPTION_ID=$SubscriptionId `
-    AGENT_KEY_sre1=$API_KEY
-
-az functionapp config set -n $FuncCommand -g $RG_SRE_OPS --always-on true --output none
-az functionapp vnet-integration add -n $FuncCommand -g $RG_SRE_OPS --vnet $vnetId --subnet $IntegrationSubnet --output none 2>$null
-Write-OK "$FuncCommand configured (VNet + AlwaysOn + app settings)"
-
-# ============================================
-# Step 9: Summary
-# ============================================
-Write-Step "Step 9/9 — Deployment Summary"
-
-$configUrl = "https://$FuncConfig.azurewebsites.net/api"
-$commandUrl = "https://$FuncCommand.azurewebsites.net/api"
-
+# Step 7: Summary
+Write-Step "Step 7/7 — Done"
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Green
 Write-Host " DEPLOYMENT COMPLETE" -ForegroundColor Green
 Write-Host "============================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "Save these values for agent setup:" -ForegroundColor Yellow
+Write-Host "  Config Proxy:   https://$ConfigProxyName.azurewebsites.net/api"
+Write-Host "  Command Proxy:  https://$CommandProxyName.azurewebsites.net/api"
+Write-Host "  API Key:        $API_KEY"
+Write-Host "  UMI Client ID:  $UMI_CLIENT_ID"
+Write-Host "  UMI Principal:  $UMI_PRINCIPAL_ID"
+Write-Host "  Storage:        $StorageAccountName"
 Write-Host ""
-Write-Host "  UMI Client ID:      $UMI_CLIENT_ID"
-Write-Host "  UMI Principal ID:   $UMI_PRINCIPAL_ID"
-Write-Host "  Storage Account:    $StorageAccountName"
-Write-Host "  Config Proxy URL:   $configUrl"
-Write-Host "  Command Proxy URL:  $commandUrl"
-Write-Host "  API Key:            $API_KEY"
-Write-Host ""
-Write-Host "Next steps:" -ForegroundColor Yellow
-Write-Host "  1. Deploy function code:"
-Write-Host "     cd proxy/sre-config-proxy && func azure functionapp publish $FuncConfig --python"
-Write-Host "     cd proxy/sre-command-proxy && func azure functionapp publish $FuncCommand --python"
-Write-Host ""
-Write-Host "  2. Assign RBAC on SAP resource groups (see deployment guide Step 1.10):"
-Write-Host "     - Custom VM Run Command Operator role on each SAP RG"
-Write-Host "     - Reader role on each SAP RG"
-Write-Host "     - UMI Principal ID: $UMI_PRINCIPAL_ID"
-Write-Host ""
-Write-Host "  3. Deploy collector to SAP VMs (see docs/deployment-guide.md Phase 2)"
-Write-Host "     Set these env vars on each VM in /opt/sre/sre.env:"
-Write-Host "       SRE_STORAGE_ACCOUNT=$StorageAccountName"
-Write-Host "       SRE_UMI_CLIENT_ID=$UMI_CLIENT_ID"
-Write-Host ""
-Write-Host "  4. Create SRE Agent at https://sre.azure.com"
-Write-Host "     - Add this repo as Plugin Marketplace source (installs all 15 skills)"
-Write-Host "     - Connect repo as Knowledge Source"
-Write-Host "     - Fill in Team Onboarding with values above"
+Write-Host "Next:" -ForegroundColor Yellow
+Write-Host "  1. func azure functionapp publish $ConfigProxyName --python"
+Write-Host "  2. func azure functionapp publish $CommandProxyName --python"
+Write-Host "  3. Assign RBAC: Reader + VM Contributor on SAP RGs for UMI ($UMI_PRINCIPAL_ID)"
+Write-Host "  4. SRE Agent: import skills, add landscape, paste team onboarding"
+Write-Host "  5. Collector: see README Step 4 for VM deployment instructions"
 Write-Host ""

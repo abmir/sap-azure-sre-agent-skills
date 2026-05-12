@@ -1,218 +1,178 @@
 # SAP Azure SRE Agent Skills
 
-Azure SRE Agent skills for SAP workloads on Azure. 15 custom skills organized across 4 operational tiers: **Observe, Diagnose, Prevent, Heal**.
-
-## Why Tiers?
-
-Traditional monitoring tools generate alerts — but alerts alone don't fix problems. The tier model progressively increases agent autonomy while maintaining human control:
-
-```
-T1  Observe & Inform     →  "What's happening?"      Agent reads, reports, never changes anything
-T2  Diagnose & Explain   →  "Why did it break?"      Agent correlates logs, metrics, events into RCA
-T3  Predict & Prevent    →  "What's about to break?" Agent detects drift/trends, recommends fix, WAITS for approval
-T4  Act & Heal           →  "Fix it now"             Agent executes guardrailed actions in time-critical scenarios
-```
-
-**Key design principle:** T1 and T2 are always safe (read-only). T3 requires human approval before any change. T4 runs autonomously but is rate-limited (e.g., max 5 actions/day) and restricted to a hardcoded allowlist of safe operations.
-
-This matters for **AAU (Agent Activity Unit) cost optimization**: most user queries are T1 (4–6 API calls, ~500 tokens). Only incident investigations (T2) or remediation workflows (T3/T4) consume more. A well-tuned agent spends 80% of its AAU budget on T1 observability queries.
-
-## Quick Start
-
-1. **Fork this repo** to your organization
-2. **Deploy infrastructure** — follow [docs/deployment-guide.md](docs/deployment-guide.md) (storage, function apps, managed identity, RBAC)
-3. **Fill in** `config/config.template.yaml` → save as `config/config.<your-org>.yaml`
-4. **Fill in** `config/sap-landscape-inventory.template.json` → save as `config/sap-landscape-inventory.json`
-5. **Set up SAP VM collectors** — deploy `collector/collect-sap-configs.sh` + cron job on each SAP VM
-6. **Create an Azure SRE Agent** at [sre.azure.com](https://sre.azure.com)
-7. **Connect Knowledge Sources** — add this GitHub repo as a Knowledge Source (agent reads configs, inventory, and docs automatically)
-8. **Install skills via Plugin Marketplace** — add this repo as a marketplace source, browse all 15 skills, and import with one click. Alternatively, upload each `SKILL.md` from `skills/` to Skill Builder manually.
-9. **Configure Team Onboarding** — fill in `onboarding/team-onboarding.template.md` with your config values and paste into the agent's Team Onboarding
-
-> **Plugin Marketplace:** This repo includes a `.github/plugin/marketplace.json` manifest. Register it as a [Plugin Marketplace source](https://learn.microsoft.com/en-us/azure/sre-agent/plugin-marketplace) to browse, install, and update all 15 skills with version tracking and SHA-256 content hashing — no manual copy-pasting.
-
-## Skill Catalog
-
-| Skill | Tier | Agent Behavior |
-|-------|------|---------------|
-| SAP Landscape Discovery | T1 | Read-Only |
-| SAP Deployment Readiness | T1 | Read-Only |
-| SAP Operational Health | T1 | Read-Only |
-| SAP Configuration Guardian | T1 + T3 | Read-Only or Semi-Auto |
-| SAP Incident RCA | T2 | Read-Only + Integrations |
-| SAP Performance Diagnostics | T1 | Read-Only |
-| SAP HA & DR Guardian | T1 + T3 | Read-Only or Semi-Auto |
-| SAP Resiliency Assessment | T1 | Read-Only |
-| SAP Cost Insights | T1 | Read-Only |
-| SAP Anomaly Forecaster | T3 | Semi-Autonomous |
-| SAP Maintenance Autopilot | T4 | Fully Autonomous |
-| SAP Self-Healing | T4 | Fully Autonomous |
-| SAP Command Executor | T1-T4 | User + Agent-Internal |
-| SAP ServiceNow Connector | Agent-Internal | Conditional |
-| SAP APM Connector | Agent-Internal | Conditional |
-
-## Tier Framework
-
-| Tier | Name | Agent Behavior | What It Does |
-|------|------|---------------|-------------|
-| T1 | Observe & Inform | Read-Only | Instant visibility into SAP health, compliance, performance, costs |
-| T2 | Diagnose & Explain | Read-Only (auto-triggered) | Cross-layer RCA in seconds when incidents occur |
-| T3 | Predict & Prevent | Semi-Autonomous | Trend analysis, anomaly detection, remediation with approval |
-| T4 | Act & Heal | Fully Autonomous | Time-critical scenarios with guardrailed actions |
-
-## Repository Structure
-
-```
-├── skills/                          # 15 SRE Agent skills (generic, no hardcoded values)
-│   ├── sap-landscape-discovery/
-│   ├── sap-deployment-readiness/
-│   ├── sap-operational-health/
-│   ├── sap-configuration-guardian/
-│   ├── sap-incident-rca/
-│   ├── sap-performance-diagnostics/
-│   ├── sap-ha-dr-guardian/
-│   ├── sap-resiliency-assessment/
-│   ├── sap-cost-insights/
-│   ├── sap-anomaly-forecaster/
-│   ├── sap-maintenance-autopilot/
-│   ├── sap-self-healing/
-│   ├── sap-command-executor/
-│   ├── sap-servicenow-connector/
-│   └── sap-apm-connector/
-├── config/                          # Environment configuration templates
-│   └── config.template.yaml
-├── onboarding/                      # Team onboarding template
-│   └── team-onboarding.template.md
-├── proxy/                           # Azure Function proxy code
-│   ├── sre-config-proxy/
-│   └── sre-command-proxy/
-├── collector/                       # SAP VM config collector + cron setup
-│   ├── collect-sap-configs.sh
-│   └── deploy-and-collect.ps1
-├── infra/                           # Automated infrastructure deployment
-│   └── deploy-sre-infra.ps1
-└── docs/                            # Architecture, strategy, deployment guide
-```
+15 SRE skills for SAP HANA and NetWeaver workloads on Azure. Import via Plugin Marketplace in 1 click.
 
 ## Prerequisites
 
-- Azure subscription with **existing SAP workloads** (HANA, NetWeaver) already deployed on Azure VMs
-- Azure Monitor for SAP Solutions (AMS) configured with HANA provider(s)
-- Hub/shared services VNet with IntegrationSubnet (delegated to Microsoft.Web/serverFarms)
-- VNet connectivity from IntegrationSubnet to SAP VM subnets (same VNet or peered)
+- Existing SAP workloads on Azure VMs (HANA + NetWeaver running)
+- Azure Monitor for SAP Solutions (AMS) with HANA provider configured
+- A VNet subnet delegated to `Microsoft.Web/serverFarms` (for function app integration)
+- Azure SRE Agent created at [sre.azure.com](https://sre.azure.com)
 
-> **This solution does NOT deploy SAP.** It monitors and manages existing SAP systems. You need working SAP VMs with HANA running before setting up the SRE Agent.
+## Setup (4 Steps)
+
+### 1. Deploy Infrastructure
+
+```powershell
+git clone https://github.com/<org>/sap-azure-sre-agent-skills.git
+cd sap-azure-sre-agent-skills
+
+.\infra\deploy-sre-infra.ps1 `
+    -SubscriptionId "<your-subscription-id>" `
+    -StorageAccountName "<globally-unique-name>" `
+    -IntegrationSubnetId "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Network/virtualNetworks/<vnet>/subnets/<subnet>"
+
+# Deploy function code
+cd proxy/sre-config-proxy && func azure functionapp publish <config-proxy-name> --python
+cd ../sre-command-proxy && func azure functionapp publish <command-proxy-name> --python
+```
+
+**Assign RBAC on each SAP resource group:**
+
+| Role | Scope | Purpose |
+|------|-------|---------|
+| Reader | Each SAP resource group | VM discovery |
+| Virtual Machine Contributor | Each SAP resource group | VM Run Command execution |
+
+```powershell
+az role assignment create --assignee-object-id <UMI-PRINCIPAL-ID> --role "Reader" --scope "/subscriptions/<sap-sub>/resourceGroups/<sap-rg>"
+az role assignment create --assignee-object-id <UMI-PRINCIPAL-ID> --role "Virtual Machine Contributor" --scope "/subscriptions/<sap-sub>/resourceGroups/<sap-rg>"
+```
+
+### 2. Import Skills
+
+1. SRE Agent portal → **Plugins** → **Manage marketplaces** → **Add**
+2. Enter: `<org>/sap-azure-sre-agent-skills` → **Resolve** → **Add**
+3. Click plugin → **Install** (imports all 15 skills)
+
+> **Note:** Repo must be public. Uncheck "Supported" filter to see skills-only plugins.
+
+### 3. Configure SRE Agent
+
+- **Managed Resources:** Add SAP resource groups + AMS resource group
+- **Connectors:** Add Log Analytics Workspace (AMS workspace)
+- **Knowledge Sources:** Upload `config/sap-landscape-inventory.template.json` (filled in with your SAP systems)
+- **Team Onboarding:** Paste filled-in `onboarding/team-onboarding.template.md` with proxy URLs, API key, subscription ID
+
+### 4. Deploy Collector to SAP VMs
+
+The collector script gathers SAP/HANA/OS configs from each VM and uploads to blob storage weekly.
+
+**a) Download the collector script** (already uploaded to storage by the deploy script):
+
+```bash
+# On each SAP VM (as root):
+mkdir -p /opt/sre
+az login --identity --username <UMI-CLIENT-ID> --output none
+az storage blob download --account-name <STORAGE-ACCOUNT> --container-name sap-configs \
+    --name scripts/collect-sap-configs.sh --file /opt/sre/collect-sap-configs.sh --auth-mode login
+chmod +x /opt/sre/collect-sap-configs.sh
+```
+
+**b) Create the environment file** (`/opt/sre/sre.env`):
+
+```bash
+cat > /opt/sre/sre.env << 'EOF'
+SRE_STORAGE_ACCOUNT=<your-storage-account-name>
+SRE_CONTAINER=sap-configs
+SRE_UMI_CLIENT_ID=<your-umi-client-id>
+EOF
+chmod 600 /opt/sre/sre.env
+```
+
+**c) Create the cron wrapper** (`/opt/sre/run-collector.sh`):
+
+```bash
+cat > /opt/sre/run-collector.sh << 'EOF'
+#!/bin/bash
+source /opt/sre/sre.env
+
+# === EDIT: Set values for THIS VM ===
+SID="AB1"           # SAP System ID
+DB_SID="DB1"         # HANA Database SID
+ROLES="db,ascs,app"  # Roles on this VM: db, ascs, app, sbd (comma-separated)
+HANA_INST="00"       # HANA instance number (db role only)
+ASCS_INST="01"       # ASCS instance number (ascs role only)
+APP_INST="02"        # App instance number (app role only)
+# ====================================
+
+ARGS="--sid $SID --db-sid $DB_SID --roles $ROLES"
+[ -n "$HANA_INST" ] && ARGS="$ARGS --hana-inst $HANA_INST"
+[ -n "$ASCS_INST" ] && ARGS="$ARGS --ascs-inst $ASCS_INST"
+[ -n "$APP_INST" ]  && ARGS="$ARGS --app-inst $APP_INST"
+
+/opt/sre/collect-sap-configs.sh $ARGS >> /var/log/sre-config-collect.log 2>&1
+EOF
+chmod +x /opt/sre/run-collector.sh
+```
+
+**d) Set up weekly cron** (every Sunday at 2:00 AM):
+
+```bash
+echo "0 2 * * 0 root /opt/sre/run-collector.sh" > /etc/cron.d/sre-collector
+chmod 644 /etc/cron.d/sre-collector
+```
+
+**e) Assign the UMI to the VM** (so it can upload to blob storage):
+
+```powershell
+az vm identity assign -g <sap-rg> -n <vm-name> --identities <UMI-RESOURCE-ID>
+```
+
+**f) Add SAP VM subnet to storage firewall** (so VMs can reach the storage account):
+
+```powershell
+az storage account network-rule add --account-name <STORAGE-ACCOUNT> \
+    --subnet "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Network/virtualNetworks/<vnet>/subnets/<sap-subnet>"
+```
 
 ## What Gets Created
 
-The deploy script (`infra/deploy-sre-infra.ps1`) creates everything in **one resource group**:
-
 ```
-RG_SRE_OPS (created by deploy script)
-├── sre-ops-umi              User-Assigned Managed Identity (one identity for everything)
-├── <storage-account>        Storage Account (SAP config snapshots, shared key disabled)
+RG_SRE_OPS
+├── sre-ops-umi              User-Assigned Managed Identity
+├── <storage-account>        Storage Account (SAP configs, shared key disabled)
 ├── sre-ops-plan             App Service Plan (B1 Linux)
-├── <config-proxy>           Function App (reads SAP configs from blob storage)
+├── <config-proxy>           Function App (reads SAP configs from blob)
 ├── <command-proxy>          Function App (executes allowlisted commands on SAP VMs)
-└── 2x Application Insights  Auto-created with each function app
+└── 2x Application Insights  Auto-created with function apps
 ```
 
-**Additionally created by sre.azure.com (separate RG, auto-managed):**
-
-```
-RG_SAP_SRE_Agent (auto-created by Azure SRE Agent platform)
-├── <agent-name>             Azure SRE Agent instance
-├── <agent-mi>               Agent Managed Identity (for Azure API calls)
-├── <agent-app-insights>     Application Insights
-├── <agent-workspace>        Log Analytics Workspace
-└── API Connections           Teams, Office365 (if configured)
-```
-
-## Identity & Networking
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ Identities (just two)                                           │
-│                                                                 │
-│  sre-ops-umi (UMI)          → Function apps use this for:      │
-│    ├─ AzureWebJobsStorage     (runtime storage, identity-based) │
-│    ├─ Blob read/write         (config proxy reads, VMs upload)  │
-│    ├─ VM Run Command          (command proxy executes commands)  │
-│    └─ ARM API calls           (DefaultAzureCredential)          │
-│                                                                 │
-│  agent-mi (auto-created)    → SRE Agent uses this for:         │
-│    ├─ Azure Monitor/AMS       (KQL queries)                     │
-│    ├─ ARM Resource Graph      (VM discovery)                    │
-│    └─ Cost Management         (cost analysis)                   │
-└─────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────┐
-│ Network Requirements                                            │
-│                                                                 │
-│  IntegrationSubnet (/26+)   → Function apps VNet integration   │
-│    ├─ Delegated to Microsoft.Web/serverFarms                    │
-│    ├─ Added to storage account firewall rules                   │
-│    └─ Must reach SAP VM subnets (same VNet or peered)           │
-│                                                                 │
-│  SAP VM Subnets             → Where SAP VMs run                │
-│    ├─ Added to storage account firewall (for collector upload)  │
-│    └─ NSG must allow outbound to Azure (IMDS, ARM, storage)    │
-│                                                                 │
-│  Storage Account            → Firewall: Deny by default        │
-│    ├─ IntegrationSubnet allowed                                 │
-│    ├─ SAP VM subnets allowed                                   │
-│    └─ No public access, no shared key                          │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-## RBAC Requirements
+## RBAC Summary
 
 | Identity | Role | Scope | Purpose |
 |----------|------|-------|---------|
-| sre-ops-umi | Storage Blob Data Owner | Storage account | AzureWebJobsStorage + config read/write |
-| sre-ops-umi | Storage Queue Data Contributor | Storage account | AzureWebJobsStorage runtime |
-| sre-ops-umi | Storage Table Data Contributor | Storage account | AzureWebJobsStorage runtime |
-| sre-ops-umi | Storage Blob Data Contributor | Storage account | Collector VM uploads |
-| sre-ops-umi | Virtual Machine Contributor | Each SAP RG | VM Run Command execution |
+| sre-ops-umi | Storage Blob Data Owner | Storage account | Runtime storage + config read/write |
+| sre-ops-umi | Storage Queue/Table Data Contributor | Storage account | Function runtime |
 | sre-ops-umi | Reader | Each SAP RG | VM discovery |
-| agent-mi | Reader | Each SAP RG | Azure Resource Graph queries |
-| agent-mi | Log Analytics Reader | AMS workspace | KQL queries for HANA/SAP data |
+| sre-ops-umi | Virtual Machine Contributor | Each SAP RG | VM Run Command |
+| agent-mi (auto) | Reader | SAP RGs + AMS RG | Azure API calls |
+| agent-mi (auto) | Log Analytics Reader | AMS workspace | KQL queries |
 
-> **Full step-by-step setup:** See [docs/deployment-guide.md](docs/deployment-guide.md) for infrastructure setup, SAP VM collector, and agent configuration.
+## Skill Catalog
 
-## Security Model
+| Skill | Tier | Description |
+|-------|------|-------------|
+| SAP Landscape Discovery | T1 | System inventory, VM power state |
+| SAP Operational Health | T1 | AMS health, VM metrics, alert coverage |
+| SAP Performance Diagnostics | T1 | HANA memory, SQL probe, disk IOPS |
+| SAP Deployment Readiness | T1 | SKU check, quota, zone availability |
+| SAP Resiliency Assessment | T1 | HA architecture, zone coverage, SPOFs |
+| SAP Cost Insights | T1 | Cost breakdown, RI coverage, savings |
+| SAP Incident RCA | T2 | Cross-layer root cause analysis |
+| SAP Configuration Guardian | T1+T3 | 59 config checks aligned with STAF |
+| SAP HA & DR Guardian | T1+T3 | Pacemaker, HSR, failover forensics |
+| SAP Anomaly Forecaster | T3 | Memory/disk trend projection |
+| SAP Maintenance Autopilot | T4 | Graceful shutdown for scheduled maintenance |
+| SAP Self-Healing | T4 | Log volume full, backup stale, sysctl drift |
+| SAP Command Executor | Internal | 15 allowlisted VM commands via proxy |
+| SAP ServiceNow Connector | Internal | ITSM integration (if configured) |
+| SAP APM Connector | Internal | Dynatrace/Grafana integration (if configured) |
 
-- **Managed Identity (MI)** — all Azure API calls authenticate via the agent's MI. No passwords or service principals.
-- **Command allowlist** — VM commands go through a hardened proxy with 14 pre-approved read-only commands. No arbitrary script execution on SAP VMs.
-- **Input sanitization** — all user-supplied parameters (`sidadm`, `instance`, `sid`, `filepath`) are validated with strict regex patterns and shell-quoted (`shlex.quote`) before execution.
-- **Path traversal protection** — config proxy validates blob paths against directory traversal attacks (`../`, absolute paths, invalid characters).
-- **Least privilege RBAC** — agent MI gets Reader only. Proxy MI gets a custom role limited to `virtualMachines/runCommand/action` + `virtualMachines/read`.
-- **Per-agent API keys** — each SRE Agent instance authenticates with its own `AGENT_KEY_*` app setting. Rotate by updating the setting.
-- **No hardcoded secrets** — all environment-specific values come from app settings or Team Onboarding. No credentials in code or skill files.
-- **Network isolation** — storage account firewall set to Deny by default. Only VNet-integrated function apps and SAP VM subnets can access config data.
-- **Generic error responses** — proxy functions return sanitized error messages to prevent leaking internal infrastructure details.
-- **Audit trail** — every command execution is logged to Application Insights with structured JSON: caller ID, command, target VM, result, and latency.
+## Security
 
-## Cost Optimization (AAU Efficiency)
-
-- **Data reuse** — all 15 skills include instructions to reuse landscape registry, VM configs, and AMS query results already in the conversation context. No redundant API calls.
-- **Batch queries** — Performance Diagnostics batches 6 HANA checks into a single KQL query instead of running them individually.
-- **Response caching** — config proxy caches blob responses in-memory (1-hour TTL). Repeat queries within the same hour hit cache, not storage.
-- **Tiered autonomy** — T1/T2 skills are read-only (4–6 API calls each). T3/T4 skills only activate when needed and are rate-limited (max 5 autonomous actions/day).
-- **System criticality tagging** — landscape inventory supports `criticality` field (`production`, `non-production`, `dev`) so T4 skills can apply stricter guardrails on production systems.
-
-## Reliability & Resilience
-
-- **Proxy fallback** — all skills include fallback instructions: if config or command proxy is unreachable, continue with Azure-native data sources (AMS, ARM API, Azure Monitor) and inform the user.
-- **Collector robustness** — all HANA and cluster commands in the collector script are wrapped with `timeout 15` to prevent hangs when services are down. Hostname validation prevents malformed blob paths.
-- **Idempotent collection** — weekly cron uploads are idempotent. Re-running the collector overwrites `latest/` with fresh data; historical snapshots are preserved in dated directories.
-- **Log rotation** — collector log file (`/var/log/sre-config-collect.log`) uses logrotate with 12-week retention to prevent disk fill on SAP VMs.
-- **Offline resilience** — config snapshots in blob storage remain accessible even when SAP VMs are shut down (auto-shutdown schedules, maintenance windows), enabling RCA on unavailable systems.
-
-## Updates
-
-Microsoft releases skill updates as PRs to this repo. Customers review, test, and merge at their own pace.
-
-## License
-
-Microsoft Internal — Not for redistribution without approval.
+- **Command allowlist:** Only 15 specific commands can run on SAP VMs. No arbitrary shell execution.
+- **No shared keys:** Storage uses identity-based auth. No secrets in code.
+- **Network isolation:** Storage firewall Deny by default. Only IntegrationSubnet + SAP VM subnets allowed.
+- **Input sanitization:** All parameters shell-quoted (`shlex.quote`) and regex-validated.
+- **Audit trail:** Every command execution logged to Application Insights.
