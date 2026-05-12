@@ -188,6 +188,31 @@ az role assignment create `
     --output none 2>$null
 Write-OK "Storage Blob Data Contributor assigned"
 
+# Identity-based AzureWebJobsStorage requires these roles on the UMI
+az role assignment create `
+    --assignee-object-id $UMI_PRINCIPAL_ID `
+    --assignee-principal-type ServicePrincipal `
+    --role "Storage Blob Data Owner" `
+    --scope $stScope `
+    --output none 2>$null
+Write-OK "Storage Blob Data Owner assigned (for AzureWebJobsStorage)"
+
+az role assignment create `
+    --assignee-object-id $UMI_PRINCIPAL_ID `
+    --assignee-principal-type ServicePrincipal `
+    --role "Storage Queue Data Contributor" `
+    --scope $stScope `
+    --output none 2>$null
+Write-OK "Storage Queue Data Contributor assigned"
+
+az role assignment create `
+    --assignee-object-id $UMI_PRINCIPAL_ID `
+    --assignee-principal-type ServicePrincipal `
+    --role "Storage Table Data Contributor" `
+    --scope $stScope `
+    --output none 2>$null
+Write-OK "Storage Table Data Contributor assigned"
+
 # ============================================
 # Step 5: Integration Subnet
 # ============================================
@@ -261,12 +286,42 @@ foreach ($funcName in @($FuncConfig, $FuncCommand)) {
     }
 }
 
+# Assign System MI + UMI to each function app (required for identity-based AzureWebJobsStorage)
+foreach ($funcName in @($FuncConfig, $FuncCommand)) {
+    az functionapp identity assign -n $funcName -g $RG_SRE_OPS -o none
+    az functionapp identity assign -n $funcName -g $RG_SRE_OPS --identities $UMI_ID -o none 2>$null
+}
+Write-OK "System MI + UMI assigned to both function apps"
+
+# Grant System MI storage roles (needed for AzureWebJobsStorage identity-based auth)
+$stScope = "/subscriptions/$SubscriptionId/resourceGroups/$RG_SRE_OPS/providers/Microsoft.Storage/storageAccounts/$StorageAccountName"
+foreach ($funcName in @($FuncConfig, $FuncCommand)) {
+    $smiPrincipal = az functionapp identity show -n $funcName -g $RG_SRE_OPS --query principalId -o tsv
+    az role assignment create --assignee-object-id $smiPrincipal --assignee-principal-type ServicePrincipal --role "Storage Blob Data Owner" --scope $stScope -o none 2>$null
+    az role assignment create --assignee-object-id $smiPrincipal --assignee-principal-type ServicePrincipal --role "Storage Queue Data Contributor" --scope $stScope -o none 2>$null
+    az role assignment create --assignee-object-id $smiPrincipal --assignee-principal-type ServicePrincipal --role "Storage Table Data Contributor" --scope $stScope -o none 2>$null
+}
+Write-OK "System MI storage roles assigned"
+
 # ============================================
 # Step 8: Function App Settings + VNet Integration
 # ============================================
 Write-Step "Step 8/10 — Function App Configuration"
 
-# Config proxy
+# Identity-based AzureWebJobsStorage (shared key disabled on storage account)
+foreach ($funcName in @($FuncConfig, $FuncCommand)) {
+    az functionapp config appsettings delete -n $funcName -g $RG_SRE_OPS --setting-names AzureWebJobsStorage -o none 2>$null
+    az functionapp config appsettings set -n $funcName -g $RG_SRE_OPS --output none --settings `
+        AzureWebJobsStorage__accountName=$StorageAccountName `
+        AzureWebJobsStorage__blobServiceUri=https://$StorageAccountName.blob.core.windows.net `
+        AzureWebJobsStorage__queueServiceUri=https://$StorageAccountName.queue.core.windows.net `
+        AzureWebJobsStorage__tableServiceUri=https://$StorageAccountName.table.core.windows.net `
+        AzureWebJobsStorage__credential=managedidentity `
+        AzureWebJobsSecretStorageType=files
+}
+Write-OK "Identity-based AzureWebJobsStorage configured (shared key disabled)"
+
+# Config proxy app settings
 az functionapp config appsettings set -n $FuncConfig -g $RG_SRE_OPS --output none --settings `
     AZURE_CLIENT_ID=$UMI_CLIENT_ID `
     STORAGE_ACCOUNT_NAME=$StorageAccountName `
