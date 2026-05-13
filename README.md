@@ -2,6 +2,10 @@
 
 15 SRE skills for SAP HANA and NetWeaver workloads on Azure. Import via Plugin Marketplace in 1 click.
 
+## Architecture
+
+![SAP Azure SRE Agent Architecture](docs/sap-on-azure-sre-agent.png)
+
 ## Prerequisites
 
 - Existing SAP workloads on Azure VMs (HANA + NetWeaver running)
