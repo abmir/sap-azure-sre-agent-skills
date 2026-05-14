@@ -1,4 +1,4 @@
-# SAP Azure SRE Agent Skills
+# SAP Azure SRE Agent 
 
 15 SRE skills for SAP HANA and NetWeaver workloads on Azure. Import via Plugin Marketplace in 1 click.
 
