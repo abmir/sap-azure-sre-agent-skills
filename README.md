@@ -1,4 +1,4 @@
-# SAP Azure SRE Agent 
+# SAP Azure SRE Agent
 
 15 SRE skills for SAP HANA and NetWeaver workloads on Azure. Import via Plugin Marketplace in 1 click.
 
@@ -8,48 +8,56 @@
 
 ## Prerequisites
 
+- **Azure CLI** (`az`) — [install](https://aka.ms/installazurecli)
+- **Python 3.11+** — [install](https://www.python.org/downloads/) (needed to build deployment package)
 - Existing SAP workloads on Azure VMs (HANA + NetWeaver running)
 - Azure Monitor for SAP Solutions (AMS) with HANA provider configured
-- A VNet subnet delegated to `Microsoft.Web/serverFarms` (for function app integration)
+- A VNet subnet delegated to `Microsoft.Web/serverFarms` (for function app VNet integration)
 - Azure SRE Agent created at [sre.azure.com](https://sre.azure.com)
 
 ## Setup (4 Steps)
 
 ### 1. Deploy Infrastructure
 
-```powershell
-git clone https://github.com/<org>/sap-azure-sre-agent-skills.git
-cd sap-azure-sre-agent-skills
+The deploy script creates all Azure resources and deploys function code in one step (~5 min):
 
+```powershell
+git clone https://github.com/mcaps-microsoft/sap-azure-sre-agent.git
+cd sap-azure-sre-agent
+
+az login
 .\infra\deploy-sre-infra.ps1 `
     -SubscriptionId "<your-subscription-id>" `
     -StorageAccountName "<globally-unique-name>" `
     -IntegrationSubnetId "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Network/virtualNetworks/<vnet>/subnets/<subnet>"
-
-# Deploy function code
-cd proxy/sre-config-proxy && func azure functionapp publish <config-proxy-name> --python
-cd ../sre-command-proxy && func azure functionapp publish <command-proxy-name> --python
 ```
 
-**Assign RBAC on each SAP resource group:**
+The script auto-generates a globally unique function app name. Override with `-ProxyName` if needed.
 
-| Role | Scope | Purpose |
-|------|-------|---------|
-| Reader | Each SAP resource group | VM discovery |
-| Virtual Machine Contributor | Each SAP resource group | VM Run Command execution |
+> **Note:** The script uses **Run From Package** deployment. This is the only deployment method that
+> works reliably in enterprise environments where Azure Policy disables storage shared-key access
+> (which breaks `func publish`, OneDeploy, and all SCM/Kudu-based methods).
+
+**After the script completes, assign RBAC on each SAP resource group** (use the UMI Principal ID from the output):
 
 ```powershell
-az role assignment create --assignee-object-id <UMI-PRINCIPAL-ID> --role "Reader" --scope "/subscriptions/<sap-sub>/resourceGroups/<sap-rg>"
-az role assignment create --assignee-object-id <UMI-PRINCIPAL-ID> --role "Virtual Machine Contributor" --scope "/subscriptions/<sap-sub>/resourceGroups/<sap-rg>"
+az role assignment create --assignee-object-id <UMI-PRINCIPAL-ID> --assignee-principal-type ServicePrincipal --role "Reader" --scope "/subscriptions/<sap-sub>/resourceGroups/<sap-rg>"
+az role assignment create --assignee-object-id <UMI-PRINCIPAL-ID> --assignee-principal-type ServicePrincipal --role "Virtual Machine Contributor" --scope "/subscriptions/<sap-sub>/resourceGroups/<sap-rg>"
+```
+
+**Add SAP VM subnet(s) to storage firewall** (so VMs can upload config snapshots):
+
+```powershell
+az storage account network-rule add --account-name <storage-account> --subnet "<sap-vm-subnet-resource-id>"
 ```
 
 ### 2. Import Skills
 
 1. SRE Agent portal → **Plugins** → **Manage marketplaces** → **Add**
-2. Enter: `<org>/sap-azure-sre-agent-skills` → **Resolve** → **Add**
+2. Enter: `mcaps-microsoft/sap-azure-sre-agent` → **Resolve** → **Add**
 3. Click plugin → **Install** (imports all 15 skills)
 
-> **Note:** Repo must be public. Uncheck "Supported" filter to see skills-only plugins.
+> **Note:** Repo must be accessible to the agent. Set filter to "All" (not "Supported") to see skills-only plugins.
 
 ### 3. Configure SRE Agent
 
@@ -137,10 +145,21 @@ RG_SRE_OPS
 ├── sre-ops-umi              User-Assigned Managed Identity
 ├── <storage-account>        Storage Account (SAP configs, shared key disabled)
 ├── sre-ops-plan             App Service Plan (B1 Linux)
-├── <config-proxy>           Function App (reads SAP configs from blob)
-├── <command-proxy>          Function App (executes allowlisted commands on SAP VMs)
-└── 2x Application Insights  Auto-created with function apps
+├── <sre-proxy>              Function App (unified: config read + command execution)
+└── Application Insights     Auto-created with function app
 ```
+
+### API Endpoints
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET | `/api/registry` | SAP landscape inventory |
+| GET | `/api/config/{sid}/{hostname}/{path}` | Single config file |
+| GET | `/api/configs/{sid}/{hostname}` | All configs for a VM |
+| GET | `/api/configs/{sid}` | All configs for a system |
+| GET | `/api/commands` | List allowed commands |
+| GET | `/api/diag` | MI + ARM connectivity test |
+| POST | `/api/command` | Execute command on SAP VM |
 
 ## RBAC Summary
 
