@@ -1,23 +1,28 @@
-"""SAP SRE Agent Proxy — unified config + command proxy.
+"""SAP SRE Agent Proxy — unified config + command proxy (Container App edition).
 
 Config endpoints:  read SAP config files and landscape inventory from blob storage.
 Command endpoints: execute pre-approved commands on SAP VMs via Azure Run Command API.
 """
-import azure.functions as func
-import logging
 import json
+import logging
 import os
 import re
 import shlex
 import time as _time
-import requests
+
+import requests as http_requests
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
-app = func.FunctionApp()
+app = FastAPI(title="SAP SRE Agent Proxy", docs_url=None, redoc_url=None)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # ─── Shared credential ──────────────────────────────────────────────────────
 _credential = None
+
 def get_credential():
     global _credential
     if _credential is None:
@@ -25,9 +30,9 @@ def get_credential():
     return _credential
 
 # ─── Auth ────────────────────────────────────────────────────────────────────
-def validate_caller(req):
-    """Validate using x-api-key header against AGENT_KEY_* app settings."""
-    api_key = req.headers.get("x-api-key", "") or req.params.get("code", "")
+def validate_caller(req: Request):
+    """Validate using x-api-key header against AGENT_KEY_* env vars."""
+    api_key = req.headers.get("x-api-key", "") or req.query_params.get("code", "")
     if not api_key:
         return False, None
     for key, value in os.environ.items():
@@ -35,12 +40,12 @@ def validate_caller(req):
             return True, key.replace("AGENT_KEY_", "")
     return False, None
 
-def require_auth(req):
+def require_auth(req: Request):
     valid, _ = validate_caller(req)
     if not valid:
-        return func.HttpResponse(
-            json.dumps({"error": "Unauthorized. Provide valid x-api-key header or code parameter."}),
-            status_code=401, mimetype="application/json")
+        return JSONResponse(
+            {"error": "Unauthorized. Provide valid x-api-key header or code parameter."},
+            status_code=401)
     return None
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -62,7 +67,7 @@ def cache_get(key):
 def cache_set(key, data):
     _cache[key] = (_time.time(), data)
 
-# Lazy blob client — only initialized when config endpoints are called
+# Lazy blob client
 _blob_service = None
 _container_client = None
 
@@ -70,7 +75,7 @@ def get_container_client():
     global _blob_service, _container_client
     if _container_client is None:
         if not STORAGE_ACCOUNT:
-            raise ValueError("STORAGE_ACCOUNT_NAME app setting is required for config endpoints.")
+            raise ValueError("STORAGE_ACCOUNT_NAME env var is required for config endpoints.")
         _blob_service = BlobServiceClient(
             account_url=f"https://{STORAGE_ACCOUNT}.blob.core.windows.net",
             credential=get_credential())
@@ -78,8 +83,8 @@ def get_container_client():
     return _container_client
 
 
-@app.route(route="registry", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
-def get_registry(req: func.HttpRequest) -> func.HttpResponse:
+@app.get("/api/registry")
+def get_registry(req: Request):
     """Return the SAP landscape inventory JSON."""
     auth_err = require_auth(req)
     if auth_err:
@@ -87,64 +92,59 @@ def get_registry(req: func.HttpRequest) -> func.HttpResponse:
     try:
         cached = cache_get("registry")
         if cached:
-            logging.info(json.dumps({"event": "registry_read", "source": "cache"}))
-            return func.HttpResponse(cached, mimetype="application/json", status_code=200)
+            logger.info(json.dumps({"event": "registry_read", "source": "cache"}))
+            return Response(content=cached, media_type="application/json")
         cc = get_container_client()
         data = cc.get_blob_client("sap-landscape-inventory.json").download_blob().readall().decode("utf-8")
         cache_set("registry", data)
-        logging.info(json.dumps({"event": "registry_read", "source": "blob"}))
-        return func.HttpResponse(data, mimetype="application/json", status_code=200)
+        logger.info(json.dumps({"event": "registry_read", "source": "blob"}))
+        return Response(content=data, media_type="application/json")
     except Exception as e:
-        logging.error(f"Failed to read registry: {e}")
-        return func.HttpResponse(json.dumps({"error": "Failed to read registry"}), status_code=500, mimetype="application/json")
+        logger.error(f"Failed to read registry: {e}")
+        return JSONResponse({"error": "Failed to read registry"}, status_code=500)
 
 
-@app.route(route="config/{sid}/{hostname}/{*filepath}", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
-def get_config_file(req: func.HttpRequest) -> func.HttpResponse:
+@app.get("/api/config/{sid}/{hostname}/{filepath:path}")
+def get_config_file(sid: str, hostname: str, filepath: str, req: Request):
     """Return a single config file for a given SID/hostname/filepath."""
     auth_err = require_auth(req)
     if auth_err:
         return auth_err
-    sid = req.route_params.get("sid", "")
-    hostname = req.route_params.get("hostname", "")
-    filepath = req.route_params.get("filepath", "")
     if not all([sid, hostname, filepath]):
-        return func.HttpResponse(json.dumps({"error": "Missing sid, hostname, or filepath"}), status_code=400, mimetype="application/json")
+        return JSONResponse({"error": "Missing sid, hostname, or filepath"}, status_code=400)
     if not re.match(r'^[a-zA-Z0-9_.-]+$', sid) or not re.match(r'^[a-zA-Z0-9_.-]+$', hostname):
-        return func.HttpResponse(json.dumps({"error": "Invalid sid or hostname"}), status_code=400, mimetype="application/json")
+        return JSONResponse({"error": "Invalid sid or hostname"}, status_code=400)
     if '..' in filepath or filepath.startswith('/'):
-        return func.HttpResponse(json.dumps({"error": "Invalid filepath"}), status_code=400, mimetype="application/json")
+        return JSONResponse({"error": "Invalid filepath"}, status_code=400)
     if not re.match(r'^[a-zA-Z0-9/_.\-]+$', filepath):
-        return func.HttpResponse(json.dumps({"error": "Invalid filepath characters"}), status_code=400, mimetype="application/json")
+        return JSONResponse({"error": "Invalid filepath characters"}, status_code=400)
     blob_path = f"{sid}/{hostname}/latest/{filepath}"
     try:
         cc = get_container_client()
         data = cc.get_blob_client(blob_path).download_blob().readall().decode("utf-8")
-        return func.HttpResponse(data, mimetype="text/plain", status_code=200)
+        return PlainTextResponse(data)
     except Exception as e:
         if "BlobNotFound" in str(e) or "404" in str(e):
-            return func.HttpResponse("", status_code=404)
-        logging.error(f"Failed to read {blob_path}: {e}")
-        return func.HttpResponse(json.dumps({"error": "Failed to read config file"}), status_code=500, mimetype="application/json")
+            return PlainTextResponse("", status_code=404)
+        logger.error(f"Failed to read {blob_path}: {e}")
+        return JSONResponse({"error": "Failed to read config file"}, status_code=500)
 
 
-@app.route(route="configs/{sid}/{hostname}", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
-def get_all_configs(req: func.HttpRequest) -> func.HttpResponse:
+@app.get("/api/configs/{sid}/{hostname}")
+def get_all_configs(sid: str, hostname: str, req: Request):
     """Return ALL config files for a SID/hostname as a single JSON bundle."""
     auth_err = require_auth(req)
     if auth_err:
         return auth_err
-    sid = req.route_params.get("sid", "")
-    hostname = req.route_params.get("hostname", "")
     if not all([sid, hostname]):
-        return func.HttpResponse(json.dumps({"error": "Missing sid or hostname"}), status_code=400, mimetype="application/json")
+        return JSONResponse({"error": "Missing sid or hostname"}, status_code=400)
     prefix = f"{sid}/{hostname}/latest/"
     try:
         cache_key = f"configs:{sid}:{hostname}"
         cached = cache_get(cache_key)
         if cached:
-            logging.info(json.dumps({"event": "configs_read", "sid": sid, "hostname": hostname, "source": "cache"}))
-            return func.HttpResponse(cached, mimetype="application/json", status_code=200)
+            logger.info(json.dumps({"event": "configs_read", "sid": sid, "hostname": hostname, "source": "cache"}))
+            return Response(content=cached, media_type="application/json")
         cc = get_container_client()
         files = {}
         for blob in cc.list_blobs(name_starts_with=prefix):
@@ -154,33 +154,32 @@ def get_all_configs(req: func.HttpRequest) -> func.HttpResponse:
             try:
                 files[rel_path] = cc.get_blob_client(blob.name).download_blob().readall().decode("utf-8", errors="replace")
             except Exception as e:
-                logging.warning(f"Failed to read {blob.name}: {e}")
+                logger.warning(f"Failed to read {blob.name}: {e}")
                 files[rel_path] = None
         result_json = json.dumps({"sid": sid, "hostname": hostname, "file_count": len(files), "files": files})
         cache_set(cache_key, result_json)
-        logging.info(json.dumps({"event": "configs_read", "sid": sid, "hostname": hostname, "source": "blob", "file_count": len(files)}))
-        return func.HttpResponse(result_json, mimetype="application/json", status_code=200)
+        logger.info(json.dumps({"event": "configs_read", "sid": sid, "hostname": hostname, "source": "blob", "file_count": len(files)}))
+        return Response(content=result_json, media_type="application/json")
     except Exception as e:
-        logging.error(f"Failed to list/read configs for {sid}/{hostname}: {e}")
-        return func.HttpResponse(json.dumps({"error": "Failed to read configs"}), status_code=500, mimetype="application/json")
+        logger.error(f"Failed to list/read configs for {sid}/{hostname}: {e}")
+        return JSONResponse({"error": "Failed to read configs"}, status_code=500)
 
 
-@app.route(route="configs/{sid}", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
-def get_system_configs(req: func.HttpRequest) -> func.HttpResponse:
+@app.get("/api/configs/{sid}")
+def get_system_configs(sid: str, req: Request):
     """Return ALL config files for ALL VMs in a SID as a single JSON bundle."""
     auth_err = require_auth(req)
     if auth_err:
         return auth_err
-    sid = req.route_params.get("sid", "")
     if not sid:
-        return func.HttpResponse(json.dumps({"error": "Missing sid"}), status_code=400, mimetype="application/json")
+        return JSONResponse({"error": "Missing sid"}, status_code=400)
     prefix = f"{sid}/"
     try:
         cache_key = f"system_configs:{sid}"
         cached = cache_get(cache_key)
         if cached:
-            logging.info(json.dumps({"event": "system_configs_read", "sid": sid, "source": "cache"}))
-            return func.HttpResponse(cached, mimetype="application/json", status_code=200)
+            logger.info(json.dumps({"event": "system_configs_read", "sid": sid, "source": "cache"}))
+            return Response(content=cached, media_type="application/json")
         cc = get_container_client()
         vms = {}
         for blob in cc.list_blobs(name_starts_with=prefix):
@@ -196,16 +195,16 @@ def get_system_configs(req: func.HttpRequest) -> func.HttpResponse:
             try:
                 vms[hostname][rel_path] = cc.get_blob_client(blob.name).download_blob().readall().decode("utf-8", errors="replace")
             except Exception as e:
-                logging.warning(f"Failed to read {blob.name}: {e}")
+                logger.warning(f"Failed to read {blob.name}: {e}")
                 vms[hostname][rel_path] = None
         result = {"sid": sid, "vm_count": len(vms), "vms": {h: {"file_count": len(f), "files": f} for h, f in vms.items()}}
         result_json = json.dumps(result)
         cache_set(cache_key, result_json)
-        logging.info(json.dumps({"event": "system_configs_read", "sid": sid, "source": "blob", "vm_count": len(vms)}))
-        return func.HttpResponse(result_json, mimetype="application/json", status_code=200)
+        logger.info(json.dumps({"event": "system_configs_read", "sid": sid, "source": "blob", "vm_count": len(vms)}))
+        return Response(content=result_json, media_type="application/json")
     except Exception as e:
-        logging.error(f"Failed to list/read configs for {sid}: {e}")
-        return func.HttpResponse(json.dumps({"error": "Failed to read system configs"}), status_code=500, mimetype="application/json")
+        logger.error(f"Failed to list/read configs for {sid}: {e}")
+        return JSONResponse({"error": "Failed to read system configs"}, status_code=500)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -345,21 +344,21 @@ def parse_run_command_output(data):
     return stdout, stderr
 
 
-@app.route(route="commands", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
-def list_commands(req):
+@app.get("/api/commands")
+def list_commands(req: Request):
     valid, caller = validate_caller(req)
     if not valid:
-        return func.HttpResponse(json.dumps({"error": "Unauthorized"}), status_code=401, mimetype="application/json")
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     cmds = {k: {"description": v["description"], "requires_sidadm": v["requires_sidadm"]} for k, v in ALLOWED_COMMANDS.items()}
-    return func.HttpResponse(json.dumps({"commands": cmds, "count": len(cmds)}, indent=2), mimetype="application/json")
+    return JSONResponse({"commands": cmds, "count": len(cmds)})
 
 
-@app.route(route="diag", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
-def diagnostics(req):
+@app.get("/api/diag")
+def diagnostics(req: Request):
     """Diagnostic endpoint to test MI token and ARM connectivity."""
     valid, caller = validate_caller(req)
     if not valid:
-        return func.HttpResponse(json.dumps({"error": "Unauthorized"}), status_code=401, mimetype="application/json")
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     results = {}
     try:
         t1 = _time.time()
@@ -367,38 +366,38 @@ def diagnostics(req):
         results["mi_token"] = {"status": "OK", "time_ms": int((_time.time()-t1)*1000), "token_prefix": token[:20]+"..."}
     except Exception as e:
         results["mi_token"] = {"status": "FAIL", "error": str(e)}
-        return func.HttpResponse(json.dumps(results, indent=2), mimetype="application/json")
+        return JSONResponse(results)
     try:
         t2 = _time.time()
-        r = requests.get(f"https://management.azure.com/subscriptions/{SUB_ID}?api-version=2022-12-01",
+        r = http_requests.get(f"https://management.azure.com/subscriptions/{SUB_ID}?api-version=2022-12-01",
             headers={"Authorization": f"Bearer {token}"}, timeout=30)
         results["arm_api"] = {"status": "OK" if r.status_code == 200 else f"HTTP {r.status_code}", "time_ms": int((_time.time()-t2)*1000)}
     except Exception as e:
         results["arm_api"] = {"status": "FAIL", "error": str(e)}
     try:
-        vm = req.params.get("vm", "")
-        rg = req.params.get("rg", "")
+        vm = req.query_params.get("vm", "")
+        rg = req.query_params.get("rg", "")
         if not vm or not rg:
             results["vm_check"] = {"status": "SKIP", "error": "Provide ?vm=<name>&rg=<rg> to test VM access"}
         else:
             t3 = _time.time()
-            r = requests.get(f"https://management.azure.com/subscriptions/{SUB_ID}/resourceGroups/{rg}/providers/Microsoft.Compute/virtualMachines/{vm}?api-version=2024-03-01",
+            r = http_requests.get(f"https://management.azure.com/subscriptions/{SUB_ID}/resourceGroups/{rg}/providers/Microsoft.Compute/virtualMachines/{vm}?api-version=2024-03-01",
                 headers={"Authorization": f"Bearer {token}"}, timeout=30)
             results["vm_check"] = {"status": "OK" if r.status_code == 200 else f"HTTP {r.status_code}", "time_ms": int((_time.time()-t3)*1000), "vm": vm}
     except Exception as e:
         results["vm_check"] = {"status": "FAIL", "error": str(e)}
-    return func.HttpResponse(json.dumps(results, indent=2), mimetype="application/json")
+    return JSONResponse(results)
 
 
-@app.route(route="command", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
-def execute_command(req):
+@app.post("/api/command")
+async def execute_command(req: Request):
     valid, caller = validate_caller(req)
     if not valid:
-        return func.HttpResponse(json.dumps({"error": "Unauthorized"}), status_code=401, mimetype="application/json")
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     try:
-        body = req.get_json()
+        body = await req.json()
     except ValueError:
-        return func.HttpResponse(json.dumps({"error": "Invalid JSON"}), status_code=400, mimetype="application/json")
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
 
     vm, rg = body.get("vm", "").strip(), body.get("rg", "").strip()
     command_id = body.get("command_id", "").strip()
@@ -407,69 +406,75 @@ def execute_command(req):
     sub_id = body.get("subscription_id", "").strip() or SUB_ID
 
     if not sub_id:
-        return func.HttpResponse(json.dumps({"error": "Missing subscription_id in request body or SUBSCRIPTION_ID app setting"}), status_code=400, mimetype="application/json")
+        return JSONResponse({"error": "Missing subscription_id in request body or SUBSCRIPTION_ID env var"}, status_code=400)
     if command_id not in ALLOWED_COMMANDS:
-        return func.HttpResponse(json.dumps({"error": f"Unknown: {command_id}", "available": list(ALLOWED_COMMANDS.keys())}), status_code=400, mimetype="application/json")
+        return JSONResponse({"error": f"Unknown: {command_id}", "available": list(ALLOWED_COMMANDS.keys())}, status_code=400)
     if not vm or not rg:
-        return func.HttpResponse(json.dumps({"error": "Missing vm or rg"}), status_code=400, mimetype="application/json")
+        return JSONResponse({"error": "Missing vm or rg"}, status_code=400)
 
     cmd = ALLOWED_COMMANDS[command_id]
     if cmd["requires_sidadm"] and not sidadm:
-        return func.HttpResponse(json.dumps({"error": f"'{command_id}' requires sidadm"}), status_code=400, mimetype="application/json")
+        return JSONResponse({"error": f"'{command_id}' requires sidadm"}, status_code=400)
 
     err = validate_input(vm, rg, sidadm, instance)
     if err:
-        return func.HttpResponse(json.dumps({"error": err}), status_code=400, mimetype="application/json")
+        return JSONResponse({"error": err}, status_code=400)
 
     if command_id == "deploy_collector":
         script, build_err = build_deploy_collector_script(body)
         if build_err:
-            return func.HttpResponse(json.dumps({"error": build_err}), status_code=400, mimetype="application/json")
+            return JSONResponse({"error": build_err}, status_code=400)
     else:
         script = cmd["script"].replace("{sidadm}", shlex.quote(sidadm)).replace("{instance}", shlex.quote(instance)).replace("{sid}", shlex.quote(sid))
 
-    logging.info(json.dumps({"event": "command_execute", "caller": caller, "command_id": command_id, "vm": vm, "rg": rg, "sid": sid, "sidadm": sidadm}))
+    logger.info(json.dumps({"event": "command_execute", "caller": caller, "command_id": command_id, "vm": vm, "rg": rg, "sid": sid, "sidadm": sidadm}))
 
     try:
         token = get_mi_token()
         url = f"https://management.azure.com/subscriptions/{sub_id}/resourceGroups/{rg}/providers/Microsoft.Compute/virtualMachines/{vm}/runCommand?api-version=2024-03-01"
-        resp = requests.post(url,
+        resp = http_requests.post(url,
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
             json={"commandId": "RunShellScript", "script": [script]}, timeout=180)
 
-        logging.info(f"runCommand initial response: {resp.status_code}")
+        logger.info(f"runCommand initial response: {resp.status_code}")
 
         if resp.status_code == 202:
             location = resp.headers.get("Location") or resp.headers.get("Azure-AsyncOperation")
             if not location:
-                return func.HttpResponse(json.dumps({"error": "202 but no Location header", "headers": dict(resp.headers)}), status_code=502, mimetype="application/json")
+                return JSONResponse({"error": "202 but no Location header", "headers": dict(resp.headers)}, status_code=502)
             for attempt in range(30):
                 _time.sleep(5)
-                poll = requests.get(location, headers={"Authorization": f"Bearer {token}"}, timeout=30)
-                logging.info(f"Poll attempt {attempt}: status={poll.status_code}")
+                poll = http_requests.get(location, headers={"Authorization": f"Bearer {token}"}, timeout=30)
+                logger.info(f"Poll attempt {attempt}: status={poll.status_code}")
                 if poll.status_code == 200:
                     data = poll.json()
                     status = data.get("status", data.get("provisioningState", "Succeeded"))
                     if status.lower() in ("succeeded", ""):
                         stdout, stderr = parse_run_command_output(data)
-                        logging.info(json.dumps({"event": "command_result", "caller": caller, "command_id": command_id, "vm": vm, "status": "success", "stdout_len": len(stdout)}))
-                        return func.HttpResponse(json.dumps({"vm": vm, "rg": rg, "command_id": command_id, "description": cmd["description"], "stdout": stdout, "stderr": stderr if stderr and stderr.strip() else None}), mimetype="application/json")
+                        logger.info(json.dumps({"event": "command_result", "caller": caller, "command_id": command_id, "vm": vm, "status": "success", "stdout_len": len(stdout)}))
+                        return JSONResponse({"vm": vm, "rg": rg, "command_id": command_id, "description": cmd["description"], "stdout": stdout, "stderr": stderr if stderr and stderr.strip() else None})
                     elif status.lower() == "failed":
-                        return func.HttpResponse(json.dumps({"error": "Run-command failed", "detail": str(data)[:500]}), status_code=502, mimetype="application/json")
+                        return JSONResponse({"error": "Run-command failed", "detail": str(data)[:500]}, status_code=502)
                 elif poll.status_code != 202:
-                    return func.HttpResponse(json.dumps({"error": f"Poll returned {poll.status_code}"}), status_code=502, mimetype="application/json")
-            return func.HttpResponse(json.dumps({"error": "Run-command timed out after 150s polling"}), status_code=504, mimetype="application/json")
+                    return JSONResponse({"error": f"Poll returned {poll.status_code}"}, status_code=502)
+            return JSONResponse({"error": "Run-command timed out after 150s polling"}, status_code=504)
 
         elif resp.status_code == 200:
             stdout, stderr = parse_run_command_output(resp.json())
-            logging.info(json.dumps({"event": "command_result", "caller": caller, "command_id": command_id, "vm": vm, "status": "success", "stdout_len": len(stdout)}))
-            return func.HttpResponse(json.dumps({"vm": vm, "rg": rg, "command_id": command_id, "description": cmd["description"], "stdout": stdout, "stderr": stderr if stderr and stderr.strip() else None}), mimetype="application/json")
+            logger.info(json.dumps({"event": "command_result", "caller": caller, "command_id": command_id, "vm": vm, "status": "success", "stdout_len": len(stdout)}))
+            return JSONResponse({"vm": vm, "rg": rg, "command_id": command_id, "description": cmd["description"], "stdout": stdout, "stderr": stderr if stderr and stderr.strip() else None})
         else:
-            return func.HttpResponse(json.dumps({"error": f"Run-command failed: {resp.status_code}", "detail": resp.text[:500]}), status_code=502, mimetype="application/json")
+            return JSONResponse({"error": f"Run-command failed: {resp.status_code}", "detail": resp.text[:500]}, status_code=502)
 
-    except requests.exceptions.Timeout:
-        logging.warning(json.dumps({"event": "command_result", "caller": caller, "command_id": command_id, "vm": vm, "status": "timeout"}))
-        return func.HttpResponse(json.dumps({"error": "Timeout — VM Run Command took too long (>180s). The VM may be unresponsive or under heavy load."}), status_code=504, mimetype="application/json")
+    except http_requests.exceptions.Timeout:
+        logger.warning(json.dumps({"event": "command_result", "caller": caller, "command_id": command_id, "vm": vm, "status": "timeout"}))
+        return JSONResponse({"error": "Timeout — VM Run Command took too long (>180s). The VM may be unresponsive or under heavy load."}, status_code=504)
     except Exception as e:
-        logging.error(json.dumps({"event": "command_result", "caller": caller, "command_id": command_id, "vm": vm, "status": "error", "error": str(e)}))
-        return func.HttpResponse(json.dumps({"error": str(e)}), status_code=500, mimetype="application/json")
+        logger.error(json.dumps({"event": "command_result", "caller": caller, "command_id": command_id, "vm": vm, "status": "error", "error": str(e)}))
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/health")
+def health():
+    """Health check endpoint for Container Apps probes."""
+    return JSONResponse({"status": "healthy"})

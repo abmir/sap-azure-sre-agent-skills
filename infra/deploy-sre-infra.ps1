@@ -1,96 +1,108 @@
 <#
 .SYNOPSIS
-    SAP SRE Agent — One-Step Infrastructure Deployment
+    SAP SRE Agent — One-Step Infrastructure Deployment (Container App)
 
 .DESCRIPTION
-    Creates RG_SRE_OPS with: Storage Account, Managed Identity, Function App (unified proxy).
-    Builds and deploys function code via Run From Package, locks down storage, and prints next steps.
-
-    Uses Run From Package deployment because enterprise policies often disable storage shared-key
-    access, which breaks all other deployment methods (func publish, OneDeploy, SCM/Kudu).
+    Creates the SRE operations resource group with: VNet, Storage Account,
+    Managed Identity, Container Registry, and Container App.
+    Builds container image in ACR and deploys to Azure Container Apps
+    with VNet integration for secure storage access via service endpoints.
 
 .PARAMETER SubscriptionId
-    Subscription where RG_SRE_OPS will be created.
+    Subscription where the resource group will be created.
 
 .PARAMETER StorageAccountName
     Globally unique storage account name (3-24 chars, lowercase + numbers only).
 
-.PARAMETER IntegrationSubnetId
-    Full resource ID of the subnet for function app VNet integration.
-    Must be delegated to Microsoft.Web/serverFarms.
-    Format: /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Network/virtualNetworks/<vnet>/subnets/<subnet>
+.PARAMETER ResourceGroupName
+    Resource group name. Default: rg-sre-ops
 
 .PARAMETER ProxyName
-    Function app name for the SRE proxy. Must be globally unique.
-    Default: sap-sre-proxy-<8-char-sub-prefix>
+    Container App name for the SRE proxy. Default: sap-sre-proxy
+
+.PARAMETER Location
+    Azure region. Default: centralus
+
+.PARAMETER VNetName
+    Virtual network name. Default: vnet-sre-ops
+
+.PARAMETER VNetAddressSpace
+    VNet address space (CIDR). Choose a range that does not overlap with
+    existing VNets if you plan to peer them later. Default: 10.60.0.0/16
+
+.PARAMETER SubnetName
+    Subnet name for Container Apps. Default: sn-container-apps
+
+.PARAMETER SubnetPrefix
+    Subnet address prefix (CIDR, minimum /23 for Container Apps).
+    Default: 10.60.0.0/23
 
 .EXAMPLE
+    # Minimal — uses all defaults:
+    .\deploy-sre-infra.ps1 `
+        -SubscriptionId "12345678-..." `
+        -StorageAccountName "stsreconfigs001"
+
+.EXAMPLE
+    # Custom VNet (e.g. to avoid overlap with existing networks):
     .\deploy-sre-infra.ps1 `
         -SubscriptionId "12345678-..." `
         -StorageAccountName "stsreconfigs001" `
-        -IntegrationSubnetId "/subscriptions/.../subnets/IntegrationSubnet"
+        -VNetAddressSpace "10.80.0.0/16" `
+        -SubnetPrefix "10.80.0.0/23"
 #>
 
 param(
     [Parameter(Mandatory)] [string] $SubscriptionId,
     [Parameter(Mandatory)] [string] $StorageAccountName,
-    [Parameter(Mandatory)] [string] $IntegrationSubnetId,
-    [string] $ProxyName
+    [string] $ResourceGroupName = "rg-sre-ops",
+    [string] $ProxyName         = "sap-sre-proxy",
+    [string] $Location          = "centralus",
+    [string] $VNetName          = "vnet-sre-ops",
+    [string] $VNetAddressSpace  = "10.60.0.0/16",
+    [string] $SubnetName        = "sn-container-apps",
+    [string] $SubnetPrefix      = "10.60.0.0/23"
 )
 
 $ErrorActionPreference = "Stop"
-$RG         = "RG_SRE_OPS"
+$RG         = $ResourceGroupName
 $UmiName    = "sre-ops-umi"
-$Plan       = "sre-ops-plan"
 $Container  = "sap-configs"
-$DeployContainer = "deploys"
-$Location   = "centralus"
+$EnvName    = "sre-ops-env"
+$AcrName    = "acrsreops$($SubscriptionId.Substring(0,8) -replace '-','')"
 $RepoRoot   = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $ProxyDir   = Join-Path $RepoRoot "proxy"
 $CollectorScript = Join-Path $RepoRoot "collector\collect-sap-configs.sh"
 
-# Auto-generate globally unique function app name
-$suffix = $SubscriptionId.Substring(0,8)
-if (-not $ProxyName) { $ProxyName = "sap-sre-proxy-$suffix" }
-
 function Write-Step  { param($msg) Write-Host "`n>> $msg" -ForegroundColor Cyan }
 function Write-OK    { param($msg) Write-Host "   OK: $msg" -ForegroundColor Green }
 function Write-Warn  { param($msg) Write-Host "   WARN: $msg" -ForegroundColor Yellow }
-function Write-Err   { param($msg) Write-Host "   ERROR: $msg" -ForegroundColor Red }
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host " SAP SRE Agent — Infrastructure Deployment" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "  Subscription:  $SubscriptionId"
+Write-Host "  Resource Group: $RG"
 Write-Host "  Storage:       $StorageAccountName"
 Write-Host "  SRE Proxy:     $ProxyName"
-Write-Host "  Subnet:        $($IntegrationSubnetId.Split('/')[-1])"
+Write-Host "  VNet:          $VNetName ($VNetAddressSpace)"
+Write-Host "  Subnet:        $SubnetName ($SubnetPrefix)"
+Write-Host "  Location:      $Location"
 
 # ── Prerequisites ──
 Write-Step "Prerequisites"
 
-if ($IntegrationSubnetId -notmatch '^/subscriptions/.+/subnets/.+$') {
-    throw "IntegrationSubnetId must be a full resource ID: /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Network/virtualNetworks/<vnet>/subnets/<subnet>"
-}
 if ($StorageAccountName -notmatch '^[a-z0-9]{3,24}$') {
     throw "StorageAccountName must be 3-24 characters, lowercase letters and numbers only."
 }
-if (-not (Test-Path (Join-Path $ProxyDir "function_app.py"))) {
-    throw "proxy/function_app.py not found. Run this script from the repo root or infra/ directory."
+if (-not (Test-Path (Join-Path $ProxyDir "Dockerfile"))) {
+    throw "proxy/Dockerfile not found. Run this script from the repo root or infra/ directory."
 }
 
 $azVersion = (az version -o json 2>$null | ConvertFrom-Json).'azure-cli'
 if (-not $azVersion) { throw "az CLI not found. Install: https://aka.ms/installazurecli" }
 Write-OK "az CLI $azVersion"
-
-# Python is required for pip install of Linux wheels
-$pythonCmd = $null
-foreach ($cmd in @("python3", "python")) {
-    try { $v = & $cmd --version 2>&1; if ($v -match "Python 3") { $pythonCmd = $cmd; break } } catch {}
-}
-if (-not $pythonCmd) { throw "Python 3 not found. Install Python 3.11+ from https://python.org" }
-Write-OK "$pythonCmd ($( & $pythonCmd --version 2>&1))"
 
 az account set --subscription $SubscriptionId
 if ($LASTEXITCODE -ne 0) { throw "Failed to set subscription. Run 'az login' first." }
@@ -101,13 +113,13 @@ $deployerUpn = $acct.user.name
 Write-OK "Logged in as $deployerUpn"
 
 # ── Step 1: Resource Group ──
-Write-Step "Step 1/9 — Resource Group"
+Write-Step "Step 1/8 — Resource Group"
 az group create --name $RG --location $Location --output none
 if ($LASTEXITCODE -ne 0) { throw "Failed to create resource group $RG" }
 Write-OK "$RG ($Location)"
 
 # ── Step 2: Managed Identity ──
-Write-Step "Step 2/9 — Managed Identity"
+Write-Step "Step 2/8 — Managed Identity"
 az identity create --name $UmiName -g $RG --location $Location --output none 2>$null
 $umiJson = az identity show -n $UmiName -g $RG -o json | ConvertFrom-Json
 $UMI_ID = $umiJson.id
@@ -117,38 +129,43 @@ if (-not $UMI_CLIENT_ID) { throw "Failed to create managed identity" }
 Write-OK "$UmiName (Client: $UMI_CLIENT_ID)"
 
 # ── Step 3: Storage Account ──
-Write-Step "Step 3/9 — Storage Account"
+Write-Step "Step 3/8 — Storage Account"
 
 az storage account create --name $StorageAccountName -g $RG -l $Location `
     --sku Standard_LRS --kind StorageV2 --min-tls-version TLS1_2 `
-    --allow-shared-key-access false --default-action Allow --output none
+    --allow-shared-key-access false --default-action Deny `
+    --bypass AzureServices --output none
 if ($LASTEXITCODE -ne 0) { throw "Failed to create storage account '$StorageAccountName'. Name may already be taken globally." }
-Write-OK "$StorageAccountName created"
+Write-OK "$StorageAccountName created (firewall: Deny + AzureServices bypass)"
+
+# Temporarily allow deployer IP for uploads
+$deployerIp = (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 10) 2>$null
+if ($deployerIp) {
+    az storage account network-rule add --account-name $StorageAccountName --ip-address $deployerIp --output none 2>$null
+    Write-OK "Deployer IP ($deployerIp) added to firewall (temporary)"
+}
 
 # Assign storage RBAC to UMI
 $stScope = "/subscriptions/$SubscriptionId/resourceGroups/$RG/providers/Microsoft.Storage/storageAccounts/$StorageAccountName"
-foreach ($role in @("Storage Blob Data Owner", "Storage Blob Data Contributor", "Storage Queue Data Contributor", "Storage Table Data Contributor")) {
+foreach ($role in @("Storage Blob Data Owner", "Storage Blob Data Contributor")) {
     az role assignment create --assignee-object-id $UMI_PRINCIPAL_ID --assignee-principal-type ServicePrincipal `
         --role $role --scope $stScope --output none 2>$null
 }
 Write-OK "UMI storage roles assigned"
 
-# Assign deployer blob access — do NOT swallow stderr (2>$null)
-# This is critical: if this fails silently, Run From Package upload will fail later
+# Assign deployer blob access
 az role assignment create --assignee $deployerUpn --role "Storage Blob Data Owner" --scope $stScope --output none
 if ($LASTEXITCODE -ne 0) {
     Write-Warn "Failed to assign Storage Blob Data Owner to deployer ($deployerUpn)."
-    Write-Warn "You may need to assign this role manually before the deploy step."
+    Write-Warn "You may need to assign this role manually."
 } else {
     Write-OK "Deployer ($deployerUpn) storage role assigned"
 }
 
-# Create containers via ARM control plane (no data-plane auth needed)
-foreach ($ctr in @($Container, $DeployContainer)) {
-    $ctrUrl = "https://management.azure.com${stScope}/blobServices/default/containers/${ctr}?api-version=2023-01-01"
-    az rest --method PUT --url $ctrUrl --body '{}' --output none 2>$null
-}
-Write-OK "Containers: $Container, $DeployContainer"
+# Create container via ARM control plane (no data-plane auth needed)
+$ctrUrl = "https://management.azure.com${stScope}/blobServices/default/containers/${Container}?api-version=2023-01-01"
+az rest --method PUT --url $ctrUrl --body '{}' --output none 2>$null
+Write-OK "Container: $Container"
 
 # Upload collector script (retry loop for RBAC propagation — up to 60s)
 if (Test-Path $CollectorScript) {
@@ -165,171 +182,95 @@ if (Test-Path $CollectorScript) {
     else { Write-Warn "Collector upload deferred — run after RBAC propagates" }
 }
 
-# ── Step 4: App Service Plan ──
-Write-Step "Step 4/9 — App Service Plan"
-az appservice plan create --name $Plan -g $RG -l $Location --sku B1 --is-linux --output none
-if ($LASTEXITCODE -ne 0) { throw "Failed to create App Service Plan" }
-Write-OK "$Plan (B1 Linux)"
+# ── Step 4: Container Registry ──
+Write-Step "Step 4/8 — Container Registry"
+az acr create --name $AcrName -g $RG -l $Location --sku Basic --admin-enabled false --output none 2>$null
+if ($LASTEXITCODE -ne 0) { throw "Failed to create ACR '$AcrName'. Name may already be taken." }
+Write-OK "$AcrName (Basic)"
 
-# ── Step 5: Function App ──
-Write-Step "Step 5/9 — Function App"
+# Grant UMI pull access to ACR
+$acrScope = "/subscriptions/$SubscriptionId/resourceGroups/$RG/providers/Microsoft.ContainerRegistry/registries/$AcrName"
+az role assignment create --assignee-object-id $UMI_PRINCIPAL_ID --assignee-principal-type ServicePrincipal `
+    --role AcrPull --scope $acrScope --output none 2>$null
+Write-OK "UMI AcrPull role assigned"
+
+# Build container image in ACR
+Write-Host "   Building container image in ACR..." -ForegroundColor Gray
+az acr build --registry $AcrName -t sre-proxy:latest $ProxyDir --no-logs --output none
+if ($LASTEXITCODE -ne 0) { throw "Failed to build container image" }
+Write-OK "Image built: $AcrName.azurecr.io/sre-proxy:latest"
+
+# ── Step 5: VNet + Subnet ──
+Write-Step "Step 5/8 — VNet + Subnet"
+az network vnet create -n $VNetName -g $RG -l $Location `
+    --address-prefix $VNetAddressSpace `
+    --subnet-name $SubnetName --subnet-prefix $SubnetPrefix `
+    --output none 2>$null
+if ($LASTEXITCODE -ne 0) { throw "Failed to create VNet '$VNetName'" }
+Write-OK "$VNetName ($VNetAddressSpace)"
+
+# Delegate subnet to Container Apps + add Storage service endpoint
+az network vnet subnet update -n $SubnetName --vnet-name $VNetName -g $RG `
+    --delegations Microsoft.App/environments `
+    --service-endpoints Microsoft.Storage `
+    --output none
+if ($LASTEXITCODE -ne 0) { throw "Failed to configure subnet '$SubnetName'" }
+Write-OK "$SubnetName ($SubnetPrefix) — delegated + Storage endpoint"
+
+# Add subnet to storage firewall
+$subnetId = az network vnet subnet show -n $SubnetName --vnet-name $VNetName -g $RG --query id -o tsv
+az storage account network-rule add --account-name $StorageAccountName --subnet $subnetId --output none
+Write-OK "Subnet added to storage firewall"
+
+# ── Step 6: Container Apps Environment ──
+Write-Step "Step 6/8 — Container Apps Environment"
+az containerapp env create --name $EnvName -g $RG -l $Location `
+    --infrastructure-subnet-resource-id $subnetId `
+    --output none 2>$null
+if ($LASTEXITCODE -ne 0) { throw "Failed to create Container Apps Environment" }
+Write-OK "$EnvName (VNet-integrated)"
+
+# ── Step 7: Container App ──
+Write-Step "Step 7/8 — Deploy Container App"
 $API_KEY = [guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N").Substring(0,16)
 
-az functionapp create --name $ProxyName -g $RG --plan $Plan `
-    --runtime python --runtime-version 3.11 --functions-version 4 `
-    --os-type Linux --storage-account $StorageAccountName --output none
-if ($LASTEXITCODE -ne 0) {
-    throw "Failed to create function app '$ProxyName'. Name must be globally unique.`nTry: -ProxyName 'myorg-sre-proxy'"
-}
-$check = az functionapp show -n $ProxyName -g $RG --query name -o tsv 2>$null
-if ($check -ne $ProxyName) { throw "Function app '$ProxyName' not found after creation." }
-Write-OK "$ProxyName"
+az containerapp create --name $ProxyName -g $RG `
+    --environment $EnvName `
+    --image "$AcrName.azurecr.io/sre-proxy:latest" `
+    --registry-server "$AcrName.azurecr.io" `
+    --registry-identity $UMI_ID `
+    --user-assigned $UMI_ID `
+    --ingress external --target-port 8000 `
+    --min-replicas 1 --max-replicas 3 `
+    --cpu 0.5 --memory 1.0Gi `
+    --env-vars `
+        AZURE_CLIENT_ID=$UMI_CLIENT_ID `
+        STORAGE_ACCOUNT_NAME=$StorageAccountName `
+        CONTAINER_NAME=$Container `
+        SUBSCRIPTION_ID=$SubscriptionId `
+        AGENT_KEY_sre1=$API_KEY `
+    --output none
+if ($LASTEXITCODE -ne 0) { throw "Failed to create Container App '$ProxyName'" }
 
-# ── Step 6: Configure Function App ──
-Write-Step "Step 6/9 — Configure Function App"
+$fqdn = az containerapp show -n $ProxyName -g $RG --query "properties.configuration.ingress.fqdn" -o tsv
+Write-OK "$ProxyName deployed (https://$fqdn)"
 
-# Assign UMI FIRST (required before identity-based storage or Run From Package)
-az functionapp identity assign -n $ProxyName -g $RG --identities $UMI_ID -o none
-if ($LASTEXITCODE -ne 0) { throw "Failed to assign managed identity to $ProxyName" }
-Write-OK "UMI assigned"
-
-# Switch to identity-based storage
-az functionapp config appsettings delete -n $ProxyName -g $RG --setting-names AzureWebJobsStorage -o none 2>$null
-az functionapp config appsettings set -n $ProxyName -g $RG --output none --settings `
-    AzureWebJobsStorage__accountName=$StorageAccountName `
-    AzureWebJobsStorage__blobServiceUri="https://$StorageAccountName.blob.core.windows.net" `
-    AzureWebJobsStorage__queueServiceUri="https://$StorageAccountName.queue.core.windows.net" `
-    AzureWebJobsStorage__tableServiceUri="https://$StorageAccountName.table.core.windows.net" `
-    AzureWebJobsStorage__credential=managedidentity `
-    AzureWebJobsStorage__clientId=$UMI_CLIENT_ID `
-    AzureWebJobsSecretStorageType=files `
-    AZURE_CLIENT_ID=$UMI_CLIENT_ID `
-    STORAGE_ACCOUNT_NAME=$StorageAccountName `
-    CONTAINER_NAME=$Container `
-    SUBSCRIPTION_ID=$SubscriptionId `
-    AGENT_KEY_sre1=$API_KEY
-if ($LASTEXITCODE -ne 0) { throw "Failed to configure app settings for $ProxyName" }
-
-az functionapp config set -n $ProxyName -g $RG --always-on true --output none
-Write-OK "App settings configured"
-
-# ── Step 7: Build & Deploy via Run From Package ──
-Write-Step "Step 7/9 — Build & Deploy (Run From Package)"
-Write-Host "   Enterprise environments often disable storage shared-key access," -ForegroundColor Gray
-Write-Host "   which breaks func publish and OneDeploy. Run From Package is the" -ForegroundColor Gray
-Write-Host "   only reliable deployment method in these environments." -ForegroundColor Gray
-
-$buildDir = Join-Path ([System.IO.Path]::GetTempPath()) "sre-proxy-build"
-$zipPath  = Join-Path ([System.IO.Path]::GetTempPath()) "sre-proxy.zip"
-
-# Clean previous build
-if (Test-Path $buildDir) { Remove-Item -Recurse -Force $buildDir }
-New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
-
-# Copy proxy source files
-Copy-Item (Join-Path $ProxyDir "function_app.py") $buildDir
-Copy-Item (Join-Path $ProxyDir "host.json") $buildDir
-Copy-Item (Join-Path $ProxyDir "requirements.txt") $buildDir
-
-# Install Python dependencies (Linux wheels for Azure Functions)
-Write-Host "   Installing Python dependencies (Linux wheels)..." -ForegroundColor Gray
-$pkgDir = Join-Path $buildDir ".python_packages" "lib" "site-packages"
-& $pythonCmd -m pip install -r (Join-Path $ProxyDir "requirements.txt") `
-    --target $pkgDir --platform manylinux2014_x86_64 --only-binary=:all: `
-    --python-version 3.11 --quiet 2>&1 | Out-Null
-if (-not (Test-Path (Join-Path $pkgDir "azure"))) {
-    throw "pip install failed — azure packages not found in $pkgDir"
-}
-Write-OK "Dependencies installed"
-
-# Create zip
-if (Test-Path $zipPath) { Remove-Item $zipPath }
-Push-Location $buildDir
-Compress-Archive -Path * -DestinationPath $zipPath -Force
-Pop-Location
-$zipSize = [math]::Round((Get-Item $zipPath).Length / 1MB, 2)
-Write-OK "Package built: $zipSize MB"
-
-# Upload zip to deploys container (retry for RBAC propagation)
-$blobName = "sre-proxy.zip"
-$uploaded = $false
-for ($retry = 1; $retry -le 6; $retry++) {
-    az storage blob upload --account-name $StorageAccountName --container-name $DeployContainer `
-        --name $blobName --file $zipPath --auth-mode login --overwrite --output none 2>$null
-    if ($LASTEXITCODE -eq 0) { $uploaded = $true; break }
-    Write-Host "   Waiting for deployer RBAC propagation ($retry/6)..." -ForegroundColor Gray
-    Start-Sleep -Seconds 10
-}
-if (-not $uploaded) {
-    throw "Failed to upload deployment zip. Ensure you have Storage Blob Data Owner on $StorageAccountName."
-}
-Write-OK "Package uploaded to $DeployContainer/$blobName"
-
-# Set Run From Package app settings
-$blobUrl = "https://$StorageAccountName.blob.core.windows.net/$DeployContainer/$blobName"
-az functionapp config appsettings set -n $ProxyName -g $RG --output none --settings `
-    WEBSITE_RUN_FROM_PACKAGE=$blobUrl `
-    WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID=$UMI_ID
-if ($LASTEXITCODE -ne 0) { throw "Failed to set Run From Package settings" }
-Write-OK "Run From Package configured"
-
-# Restart to pick up new package
-az functionapp restart -n $ProxyName -g $RG --output none
-Write-Host "   Waiting for function app to start..." -ForegroundColor Gray
-Start-Sleep -Seconds 30
-
-# Verify functions loaded
-$funcs = az functionapp function list -n $ProxyName -g $RG --query "[].name" -o tsv 2>$null
-$funcCount = ($funcs -split "`n" | Where-Object { $_.Trim() }).Count
-if ($funcCount -ge 7) {
-    Write-OK "$funcCount functions loaded"
-} else {
-    Write-Warn "Only $funcCount functions detected (expected 7). May need more startup time."
-    Write-Warn "Verify: az functionapp function list -n $ProxyName -g RG_SRE_OPS --query `"[].name`" -o tsv"
-}
-
-# Clean up temp files
-Remove-Item -Recurse -Force $buildDir -ErrorAction SilentlyContinue
-Remove-Item $zipPath -ErrorAction SilentlyContinue
-
-# ── Step 8: VNet Integration & Storage Lockdown ──
-Write-Step "Step 8/9 — VNet Integration & Storage Lockdown"
-
-# Use full subnet resource ID (VNet may be in a different RG than the function app)
-az functionapp vnet-integration add -n $ProxyName -g $RG `
-    --vnet $IntegrationSubnetId.Split("/subnets/")[0] `
-    --subnet $IntegrationSubnetId.Split("/")[-1] --output none 2>$null
-if ($LASTEXITCODE -ne 0) {
-    Write-Warn "VNet integration may have failed. Verify manually."
-} else {
-    Write-OK "VNet integration added"
-}
-
-az storage account update --name $StorageAccountName -g $RG --default-action Deny --output none
-if ($LASTEXITCODE -ne 0) { Write-Warn "Failed to set storage firewall to Deny" }
-else { Write-OK "Storage firewall set to Deny" }
-
-az storage account network-rule add --account-name $StorageAccountName `
-    --subnet $IntegrationSubnetId --output none 2>$null
-Write-OK "Firewall: IntegrationSubnet allowed"
-
-# Allow Azure trusted services (needed for Run From Package blob download)
-az storage account update --name $StorageAccountName -g $RG --bypass AzureServices --output none 2>$null
-Write-OK "Firewall: Azure trusted services bypass enabled"
-
-# ── Step 9: Summary ──
-Write-Step "Step 9/9 — Complete"
+# ── Step 8: Summary ──
+Write-Step "Step 8/8 — Complete"
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Green
 Write-Host " DEPLOYMENT COMPLETE" -ForegroundColor Green
 Write-Host "============================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "  SRE Proxy:      https://$ProxyName.azurewebsites.net/api"
+Write-Host "  SRE Proxy:      https://$fqdn"
 Write-Host "  API Key:        $API_KEY"
 Write-Host "  UMI Client ID:  $UMI_CLIENT_ID"
 Write-Host "  UMI Principal:  $UMI_PRINCIPAL_ID"
 Write-Host "  UMI Resource:   $UMI_ID"
 Write-Host "  Storage:        $StorageAccountName"
+Write-Host "  ACR:            $AcrName.azurecr.io"
+Write-Host "  VNet:           $VNetName ($VNetAddressSpace)"
+Write-Host "  Subnet:         $SubnetName ($SubnetPrefix)"
 Write-Host ""
 Write-Host "API Endpoints:" -ForegroundColor Yellow
 Write-Host "  GET  /api/registry                          Landscape inventory"
@@ -339,6 +280,7 @@ Write-Host "  GET  /api/configs/{sid}                     All configs for a syst
 Write-Host "  GET  /api/commands                          List allowed commands"
 Write-Host "  GET  /api/diag                              MI + ARM connectivity test"
 Write-Host "  POST /api/command                           Execute command on VM"
+Write-Host "  GET  /api/health                            Health check"
 Write-Host ""
 Write-Host "Next Steps:" -ForegroundColor Yellow
 Write-Host "  1. Assign RBAC on each SAP resource group:" -ForegroundColor Yellow
@@ -356,3 +298,9 @@ Write-Host "     - Paste team onboarding content"
 Write-Host ""
 Write-Host "  4. Deploy collector to SAP VMs (see README Step 4)" -ForegroundColor Yellow
 Write-Host ""
+
+# Clean up deployer IP from storage firewall
+if ($deployerIp) {
+    az storage account network-rule remove --account-name $StorageAccountName --ip-address $deployerIp --output none 2>$null
+    Write-OK "Deployer IP removed from storage firewall"
+}

@@ -9,17 +9,15 @@
 ## Prerequisites
 
 - **Azure CLI** (`az`) — [install](https://aka.ms/installazurecli)
-- **Python 3.11+** — [install](https://www.python.org/downloads/) (needed to build deployment package)
 - Existing SAP workloads on Azure VMs (HANA + NetWeaver running)
 - Azure Monitor for SAP Solutions (AMS) with HANA provider configured
-- A VNet subnet delegated to `Microsoft.Web/serverFarms` (for function app VNet integration)
 - Azure SRE Agent created at [sre.azure.com](https://sre.azure.com)
 
 ## Setup (4 Steps)
 
 ### 1. Deploy Infrastructure
 
-The deploy script creates all Azure resources and deploys function code in one step (~5 min):
+The deploy script creates all Azure resources and deploys the container app in one step (~5 min):
 
 ```powershell
 git clone https://github.com/mcaps-microsoft/sap-azure-sre-agent.git
@@ -28,15 +26,15 @@ cd sap-azure-sre-agent
 az login
 .\infra\deploy-sre-infra.ps1 `
     -SubscriptionId "<your-subscription-id>" `
-    -StorageAccountName "<globally-unique-name>" `
-    -IntegrationSubnetId "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Network/virtualNetworks/<vnet>/subnets/<subnet>"
+    -StorageAccountName "<globally-unique-name>"
 ```
 
-The script auto-generates a globally unique function app name. Override with `-ProxyName` if needed.
+That's it — just 2 parameters. The script creates a VNet with a dedicated subnet, builds the
+container image in ACR, and deploys to Azure Container Apps with VNet integration.
 
-> **Note:** The script uses **Run From Package** deployment. This is the only deployment method that
-> works reliably in enterprise environments where Azure Policy disables storage shared-key access
-> (which breaks `func publish`, OneDeploy, and all SCM/Kudu-based methods).
+Override defaults as needed: `-ResourceGroupName`, `-ProxyName`, `-Location`,
+`-VNetName`, `-VNetAddressSpace`, `-SubnetPrefix`. Use custom VNet address space if you
+need to avoid overlap with existing networks (default: `10.60.0.0/16`).
 
 **After the script completes, assign RBAC on each SAP resource group** (use the UMI Principal ID from the output):
 
@@ -141,12 +139,14 @@ az storage account network-rule add --account-name <STORAGE-ACCOUNT> \
 ## What Gets Created
 
 ```
-RG_SRE_OPS
+rg-sre-ops  (or custom name via -ResourceGroupName)
 ├── sre-ops-umi              User-Assigned Managed Identity
 ├── <storage-account>        Storage Account (SAP configs, shared key disabled)
-├── sre-ops-plan             App Service Plan (B1 Linux)
-├── <sre-proxy>              Function App (unified: config read + command execution)
-└── Application Insights     Auto-created with function app
+├── <acr>                    Azure Container Registry (Basic, container images)
+├── vnet-sre-ops             Virtual Network (10.60.0.0/16 default)
+│   └── sn-container-apps    Subnet (/23, delegated to Container Apps, Storage endpoint)
+├── sre-ops-env              Container Apps Environment (VNet-integrated)
+└── sap-sre-proxy            Container App (unified: config read + command execution)
 ```
 
 ### API Endpoints
@@ -160,13 +160,14 @@ RG_SRE_OPS
 | GET | `/api/commands` | List allowed commands |
 | GET | `/api/diag` | MI + ARM connectivity test |
 | POST | `/api/command` | Execute command on SAP VM |
+| GET | `/api/health` | Health check |
 
 ## RBAC Summary
 
 | Identity | Role | Scope | Purpose |
 |----------|------|-------|---------|
-| sre-ops-umi | Storage Blob Data Owner | Storage account | Runtime storage + config read/write |
-| sre-ops-umi | Storage Queue/Table Data Contributor | Storage account | Function runtime |
+| sre-ops-umi | Storage Blob Data Owner | Storage account | Config read/write |
+| sre-ops-umi | AcrPull | Container Registry | Pull container images |
 | sre-ops-umi | Reader | Each SAP RG | VM discovery |
 | sre-ops-umi | Virtual Machine Contributor | Each SAP RG | VM Run Command |
 | agent-mi (auto) | Reader | SAP RGs + AMS RG | Azure API calls |
@@ -196,6 +197,6 @@ RG_SRE_OPS
 
 - **Command allowlist:** Only 15 specific commands can run on SAP VMs. No arbitrary shell execution.
 - **No shared keys:** Storage uses identity-based auth. No secrets in code.
-- **Network isolation:** Storage firewall Deny by default. Only IntegrationSubnet + SAP VM subnets allowed.
+- **Network isolation:** Storage firewall Deny by default. Container App accesses storage via VNet integration + service endpoint. SAP VM subnets explicitly allowed via their own service endpoints.
 - **Input sanitization:** All parameters shell-quoted (`shlex.quote`) and regex-validated.
 - **Audit trail:** Every command execution logged to Application Insights.
