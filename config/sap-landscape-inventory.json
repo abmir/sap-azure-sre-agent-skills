@@ -3,6 +3,11 @@
   "subscription_id": "40050ff9-81f0-4654-9bd4-34551fe455df",
   "storage_account": "stsreconfigs002",
   "description": "SAP landscape inventory for Abbas SAP Lab — source of truth for all SRE Agent skills.",
+  "ams": {
+    "workspace_name": "sapmon-laws-eff092fcc1a1f0",
+    "resource_group": "RG_AMS",
+    "kql_notes": "HANA tables use sapsid_s (not SID_s), OS tables use sid_s. Host field is HOST_s. Run getschema before writing KQL against custom SAP tables."
+  },
   "systems": [
     {
       "sid": "AB1",
@@ -11,6 +16,10 @@
       "criticality": "dev",
       "resource_group": "RG_SAP_CUS_AB1",
       "managed_rg": "mrg-AB1-48f3f2",
+      "ams_providers": {
+        "hana": "sap-hana-pr-AB1",
+        "os": "os-linux-pr-AB1vm"
+      },
       "vms": [
         {
           "name": "AB1vm",
