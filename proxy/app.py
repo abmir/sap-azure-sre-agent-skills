@@ -272,7 +272,10 @@ def build_deploy_collector_script(body):
 
     script = f"""#!/bin/bash
 set -euo pipefail
-echo "Creating /opt/sre directory..."
+# Idempotent: safe to re-run if /opt/sre already exists
+if [ -d /opt/sre ]; then
+    echo "NOTICE: /opt/sre exists — updating scripts and config (logs preserved)"
+fi
 mkdir -p /opt/sre
 echo "Downloading collector script..."
 az login --identity --username {shlex.quote(umi_cid)} --output none 2>/dev/null
