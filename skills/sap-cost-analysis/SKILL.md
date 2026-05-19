@@ -5,6 +5,7 @@ tools:
     - ExecutePythonCode
     - RunAzCliReadCommands
     - GetArmResourceAsJson
+    - QueryLogAnalyticsByWorkspaceId
     - PlotPieChart
     - PlotBarChart
     - PlotAreaChartWithCorrelation
@@ -52,28 +53,50 @@ def get_landscape_registry():
     return resp.json() if resp.status_code == 200 else None
 ```
 
-## Cost Query — Azure Cost Management API
+## Cost Query — Azure Cost Management
 
-```python
-def query_costs(rg_list, timeframe="MonthToDate"):
-    token = get_mi_token("https://management.azure.com/")
-    url = f"https://management.azure.com/subscriptions/{SUB_ID}/providers/Microsoft.CostManagement/query?api-version=2023-03-01"
-    body = {
-        "type": "ActualCost",
-        "timeframe": timeframe,
-        "dataset": {
-            "granularity": "Daily",
-            "aggregation": {"totalCost": {"name": "Cost", "function": "Sum"}},
-            "grouping": [{"type": "Dimension", "name": "ResourceGroup"}],
-            "filter": {
-                "dimensions": {"name": "ResourceGroup", "operator": "In", "values": rg_list}
-            }
-        }
-    }
-    resp = requests.post(url, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        json=body, timeout=120)
-    resp.raise_for_status()
-    return resp.json()
+Use **RunAzCliReadCommands** (NOT ExecutePythonCode) for all cost queries. Example commands:
+
+```bash
+# Per-RG cost breakdown (month to date)
+az cost management query --type ActualCost --timeframe MonthToDate --scope "subscriptions/{SUB_ID}" --query "[].{rg:ResourceGroup, cost:Cost}" -o table
+
+# Cost for specific SAP resource groups
+az costmanagement query --type ActualCost --timeframe MonthToDate --dataset-grouping name=ResourceGroup type=Dimension --dataset-filter "{\"dimensions\":{\"name\":\"ResourceGroup\",\"operator\":\"In\",\"values\":[\"RG_SAP_CUS_AB1\",\"mrg-AB1-48f3f2\"]}}" --scope "subscriptions/{SUB_ID}" -o json
+```
+
+If `az costmanagement` is unavailable, use **GetArmResourceAsJson** with the Cost Management REST API:
+- URL: `/subscriptions/{SUB_ID}/providers/Microsoft.CostManagement/query?api-version=2023-03-01`
+- Method: POST
+- Body: `{"type":"ActualCost","timeframe":"MonthToDate","dataset":{"granularity":"Daily","aggregation":{"totalCost":{"name":"Cost","function":"Sum"}},"grouping":[{"type":"Dimension","name":"ResourceGroup"}]}}`
+
+## Azure Advisor Cost Recommendations
+
+**ALWAYS check Advisor for cost savings.** Use **RunAzCliReadCommands**:
+
+```bash
+# Get all cost recommendations for the subscription
+az advisor recommendation list --subscription {SUB_ID} --category Cost -o json
+
+# Filter for SAP-related resources
+az advisor recommendation list --subscription {SUB_ID} --category Cost --query "[?contains(resourceGroup,'SAP') || contains(resourceGroup,'sap') || contains(resourceGroup,'mrg-')]" -o json
+```
+
+Or use **GetArmResourceAsJson**:
+- URL: `/subscriptions/{SUB_ID}/providers/Microsoft.Advisor/recommendations?api-version=2023-01-01&$filter=Category eq 'Cost'`
+
+Advisor provides: rightsizing recommendations, RI purchase suggestions, shutdown recommendations for idle VMs, and unused resource cleanup.
+
+## Reservation (RI) Coverage
+
+Use **RunAzCliReadCommands**:
+
+```bash
+# List active reservations
+az reservations reservation-order list -o json
+
+# Check reservation utilization
+az consumption reservation summary list --reservation-order-id {ORDER_ID} --grain monthly -o json
 ```
 
 ## Analysis Areas
@@ -87,8 +110,8 @@ Check VM power state via ARM instance view. If stopped/deallocated, calculate sa
 ### 3. SRE Agent Operating Cost
 Query costs for RG_SAP_SRE_Agent and RG_SRE_OPS (agent resources + functions + storage).
 
-### 4. RI Coverage
-Query `Reservations` API to check if SAP VM SKUs have active reservations.
+### 4. RI Coverage & Advisor Recommendations
+Query `Reservations` API to check if SAP VM SKUs have active reservations. Always check Azure Advisor Cost category for rightsizing, RI purchase, and shutdown recommendations.
 
 ## Output Format
 
