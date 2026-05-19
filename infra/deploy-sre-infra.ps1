@@ -55,23 +55,25 @@
 param(
     [Parameter(Mandatory)] [string] $SubscriptionId,
     [Parameter(Mandatory)] [string] $StorageAccountName,
-    [string] $ResourceGroupName = "rg-sre-ops",
+    [string] $ResourceGroupName = "rg-sre-proxy",
     [string] $ProxyName         = "sap-sre-proxy",
     [string] $Location          = "centralus",
-    [string] $VNetName          = "vnet-sre-ops",
+    [string] $VNetName          = "vnet-sre-proxy",
     [string] $VNetAddressSpace  = "10.60.0.0/16",
     [string] $SubnetName        = "sn-container-apps",
-    [string] $SubnetPrefix      = "10.60.0.0/23"
+    [string] $SubnetPrefix      = "10.60.0.0/23",
+    [string[]] $SapSubnetIds    = @()
 )
 
 $ErrorActionPreference = "Stop"
-$RG         = $ResourceGroupName
-$UmiName    = "sre-ops-umi"
-$Container  = "sap-configs"
-$EnvName    = "sre-ops-env"
-$AcrName    = "acrsreops$($SubscriptionId.Substring(0,8) -replace '-','')"
-$RepoRoot   = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$ProxyDir   = Join-Path $RepoRoot "proxy"
+$RG              = $ResourceGroupName
+$ProxyUmiName    = "sre-proxy-umi"
+$CollectorUmiName = "sre-collector-umi"
+$Container       = "sap-configs"
+$EnvName         = "sre-proxy-env"
+$AcrName         = "acrsreproxy$($SubscriptionId.Substring(0,8) -replace '-','')"
+$RepoRoot        = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$ProxyDir        = Join-Path $RepoRoot "proxy"
 $CollectorScript = Join-Path $RepoRoot "collector\collect-sap-configs.sh"
 
 function Write-Step  { param($msg) Write-Host "`n>> $msg" -ForegroundColor Cyan }
@@ -118,18 +120,29 @@ az group create --name $RG --location $Location --output none
 if ($LASTEXITCODE -ne 0) { throw "Failed to create resource group $RG" }
 Write-OK "$RG ($Location)"
 
-# ── Step 2: Managed Identity ──
-Write-Step "Step 2/8 — Managed Identity"
-az identity create --name $UmiName -g $RG --location $Location --output none 2>$null
-$umiJson = az identity show -n $UmiName -g $RG -o json | ConvertFrom-Json
-$UMI_ID = $umiJson.id
-$UMI_CLIENT_ID = $umiJson.clientId
-$UMI_PRINCIPAL_ID = $umiJson.principalId
-if (-not $UMI_CLIENT_ID) { throw "Failed to create managed identity" }
-Write-OK "$UmiName (Client: $UMI_CLIENT_ID)"
+# ── Step 2: Managed Identities ──
+Write-Step "Step 2/10 — Managed Identities"
+
+# Proxy UMI — used by Container App for ARM API calls and blob access
+az identity create --name $ProxyUmiName -g $RG --location $Location --output none 2>$null
+$proxyUmiJson = az identity show -n $ProxyUmiName -g $RG -o json | ConvertFrom-Json
+$PROXY_UMI_ID = $proxyUmiJson.id
+$PROXY_UMI_CLIENT_ID = $proxyUmiJson.clientId
+$PROXY_UMI_PRINCIPAL_ID = $proxyUmiJson.principalId
+if (-not $PROXY_UMI_CLIENT_ID) { throw "Failed to create proxy managed identity" }
+Write-OK "$ProxyUmiName (Client: $PROXY_UMI_CLIENT_ID)"
+
+# Collector UMI — assigned to SAP VMs for config upload to blob storage
+az identity create --name $CollectorUmiName -g $RG --location $Location --output none 2>$null
+$collectorUmiJson = az identity show -n $CollectorUmiName -g $RG -o json | ConvertFrom-Json
+$COLLECTOR_UMI_ID = $collectorUmiJson.id
+$COLLECTOR_UMI_CLIENT_ID = $collectorUmiJson.clientId
+$COLLECTOR_UMI_PRINCIPAL_ID = $collectorUmiJson.principalId
+if (-not $COLLECTOR_UMI_CLIENT_ID) { throw "Failed to create collector managed identity" }
+Write-OK "$CollectorUmiName (Client: $COLLECTOR_UMI_CLIENT_ID)"
 
 # ── Step 3: Storage Account ──
-Write-Step "Step 3/8 — Storage Account"
+Write-Step "Step 3/10 — Storage Account"
 
 az storage account create --name $StorageAccountName -g $RG -l $Location `
     --sku Standard_LRS --kind StorageV2 --min-tls-version TLS1_2 `
@@ -145,13 +158,18 @@ if ($deployerIp) {
     Write-OK "Deployer IP ($deployerIp) added to firewall (temporary)"
 }
 
-# Assign storage RBAC to UMI
+# Assign storage RBAC to proxy UMI (read/write configs)
 $stScope = "/subscriptions/$SubscriptionId/resourceGroups/$RG/providers/Microsoft.Storage/storageAccounts/$StorageAccountName"
 foreach ($role in @("Storage Blob Data Owner", "Storage Blob Data Contributor")) {
-    az role assignment create --assignee-object-id $UMI_PRINCIPAL_ID --assignee-principal-type ServicePrincipal `
+    az role assignment create --assignee-object-id $PROXY_UMI_PRINCIPAL_ID --assignee-principal-type ServicePrincipal `
         --role $role --scope $stScope --output none 2>$null
 }
-Write-OK "UMI storage roles assigned"
+Write-OK "Proxy UMI storage roles assigned"
+
+# Assign storage RBAC to collector UMI (upload configs from SAP VMs)
+az role assignment create --assignee-object-id $COLLECTOR_UMI_PRINCIPAL_ID --assignee-principal-type ServicePrincipal `
+    --role "Storage Blob Data Contributor" --scope $stScope --output none 2>$null
+Write-OK "Collector UMI storage role assigned"
 
 # Assign deployer blob access
 az role assignment create --assignee $deployerUpn --role "Storage Blob Data Owner" --scope $stScope --output none
@@ -191,7 +209,7 @@ Write-OK "$AcrName (Basic)"
 
 # Grant UMI pull access to ACR
 $acrScope = "/subscriptions/$SubscriptionId/resourceGroups/$RG/providers/Microsoft.ContainerRegistry/registries/$AcrName"
-az role assignment create --assignee-object-id $UMI_PRINCIPAL_ID --assignee-principal-type ServicePrincipal `
+az role assignment create --assignee-object-id $PROXY_UMI_PRINCIPAL_ID --assignee-principal-type ServicePrincipal `
     --role AcrPull --scope $acrScope --output none 2>$null
 Write-OK "UMI AcrPull role assigned"
 
@@ -224,13 +242,24 @@ az network vnet subnet update -n $SubnetName --vnet-name $VNetName -g $RG `
 if ($LASTEXITCODE -ne 0) { throw "Failed to configure subnet '$SubnetName'" }
 Write-OK "$SubnetName ($SubnetPrefix) — delegated + Storage endpoint"
 
-# Add subnet to storage firewall
+# Add proxy subnet to storage firewall
 $subnetId = az network vnet subnet show -n $SubnetName --vnet-name $VNetName -g $RG --query id -o tsv
 az storage account network-rule add --account-name $StorageAccountName --subnet $subnetId --output none
-Write-OK "Subnet added to storage firewall"
+Write-OK "Proxy subnet added to storage firewall"
+
+# Add SAP VM subnets to storage firewall (so collector can upload configs)
+if ($SapSubnetIds.Count -gt 0) {
+    foreach ($sapSubnet in $SapSubnetIds) {
+        az storage account network-rule add --account-name $StorageAccountName --subnet $sapSubnet --output none 2>$null
+        Write-OK "SAP subnet added to storage firewall: $($sapSubnet.Split('/')[-1])"
+    }
+} else {
+    Write-Warn "No -SapSubnetIds provided. Add SAP VM subnets manually:"
+    Write-Host "     az storage account network-rule add --account-name $StorageAccountName --subnet <sap-subnet-id>" -ForegroundColor Gray
+}
 
 # ── Step 6: Container Apps Environment ──
-Write-Step "Step 6/8 — Container Apps Environment"
+Write-Step "Step 6/10 — Container Apps Environment"
 az containerapp env create --name $EnvName -g $RG -l $Location `
     --infrastructure-subnet-resource-id $subnetId `
     --output none 2>$null
@@ -245,13 +274,13 @@ az containerapp create --name $ProxyName -g $RG `
     --environment $EnvName `
     --image "$AcrName.azurecr.io/sre-proxy:latest" `
     --registry-server "$AcrName.azurecr.io" `
-    --registry-identity $UMI_ID `
-    --user-assigned $UMI_ID `
+    --registry-identity $PROXY_UMI_ID `
+    --user-assigned $PROXY_UMI_ID `
     --ingress external --target-port 8000 `
     --min-replicas 0 --max-replicas 3 `
     --cpu 0.5 --memory 1.0Gi `
     --env-vars `
-        AZURE_CLIENT_ID=$UMI_CLIENT_ID `
+        AZURE_CLIENT_ID=$PROXY_UMI_CLIENT_ID `
         STORAGE_ACCOUNT_NAME=$StorageAccountName `
         CONTAINER_NAME=$Container `
         SUBSCRIPTION_ID=$SubscriptionId `
@@ -332,29 +361,29 @@ Write-Host "============================================" -ForegroundColor Green
 Write-Host " DEPLOYMENT COMPLETE" -ForegroundColor Green
 Write-Host "============================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "  SRE Proxy:       https://$fqdn"
-Write-Host "  Auth:            Entra ID (App ID: $ProxyAppId)"
-Write-Host "  Token Audience:  api://sap-sre-proxy-$($SubscriptionId.Substring(0,8))"
-Write-Host "  API Key:         $API_KEY (fallback — use Entra ID for production)"
-Write-Host "  UMI Client ID:   $UMI_CLIENT_ID"
-Write-Host "  UMI Principal:   $UMI_PRINCIPAL_ID"
-Write-Host "  UMI Resource:    $UMI_ID"
-Write-Host "  Storage:         $StorageAccountName"
-Write-Host "  Custom RBAC:     $roleName"
+Write-Host "  SRE Proxy:          https://$fqdn"
+Write-Host "  API Key:            $API_KEY"
+Write-Host "  Proxy UMI:          $ProxyUmiName (Client: $PROXY_UMI_CLIENT_ID, Principal: $PROXY_UMI_PRINCIPAL_ID)"
+Write-Host "  Collector UMI:      $CollectorUmiName (Client: $COLLECTOR_UMI_CLIENT_ID, Resource: $COLLECTOR_UMI_ID)"
+Write-Host "  Storage:            $StorageAccountName"
+Write-Host "  VNet:               $VNetName ($VNetAddressSpace)"
+Write-Host "  Custom RBAC:        $roleName"
 Write-Host ""
 Write-Host "Next Steps:" -ForegroundColor Yellow
 Write-Host "  1. Grant proxy UMI access to SAP resource groups:" -ForegroundColor Yellow
-Write-Host "     See README Step 4 — use custom role '$roleName'" -ForegroundColor Yellow
+Write-Host "     az role assignment create --assignee-object-id $PROXY_UMI_PRINCIPAL_ID --assignee-principal-type ServicePrincipal --role `"$roleName`" --scope /subscriptions/$SubscriptionId/resourceGroups/<SAP-RG>" -ForegroundColor Gray
 Write-Host ""
-Write-Host "  2. Grant SRE Agent MI permission to call the proxy:" -ForegroundColor Yellow
-Write-Host "     az ad sp create --id $ProxyAppId   # if not already created" -ForegroundColor Yellow
-Write-Host "     # Then assign the SRE Agent's MI as an authorized caller" -ForegroundColor Yellow
+Write-Host "  2. Assign collector UMI to SAP VMs:" -ForegroundColor Yellow
+Write-Host "     az vm identity assign -g <SAP-RG> -n <VM-NAME> --identities $COLLECTOR_UMI_ID" -ForegroundColor Gray
 Write-Host ""
-Write-Host "  3. SRE Agent portal (sre.azure.com):" -ForegroundColor Yellow
-Write-Host "     - Import skills via Plugin Marketplace (mcaps-microsoft/sap-azure-sre-agent)" -ForegroundColor Yellow
-Write-Host "     - Add managed resources (SAP RGs + AMS RG)" -ForegroundColor Yellow
+Write-Host "  3. Deploy collector to SAP VMs via proxy:" -ForegroundColor Yellow
+Write-Host "     POST $fqdn/api/command with command_id=deploy_collector, storage_account=$StorageAccountName, umi_client_id=$COLLECTOR_UMI_CLIENT_ID" -ForegroundColor Gray
+Write-Host ""
+Write-Host "  4. SRE Agent portal (sre.azure.com):" -ForegroundColor Yellow
+Write-Host "     - Import skills via Skill Builder" -ForegroundColor Yellow
+Write-Host "     - Add managed resources (SAP RGs + rg-sre-proxy)" -ForegroundColor Yellow
 Write-Host "     - Upload sap-landscape-inventory.json as Knowledge Source" -ForegroundColor Yellow
-Write-Host "     - Paste team onboarding with proxy URL + App ID" -ForegroundColor Yellow
+Write-Host "     - Paste team onboarding with proxy URL + API key" -ForegroundColor Yellow
 Write-Host ""
 
 # Clean up deployer IP from storage firewall
