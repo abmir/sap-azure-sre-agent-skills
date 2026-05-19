@@ -87,7 +87,7 @@ az role definition create --role-definition infra/sap-sre-agent-role.json
 foreach ($rg in @("RG_SAP_ECP", "RG_SAP_QAS", "RG_SAP_DEV")) {
     az role assignment create --assignee-object-id $umi `
         --assignee-principal-type ServicePrincipal `
-        --role "SAP SRE Agent Operator" --scope "/subscriptions/$sub/resourceGroups/$rg"
+        --role "Custom - SAP SRE Agent Operator" --scope "/subscriptions/$sub/resourceGroups/$rg"
 }
 ```
 
