@@ -29,20 +29,57 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 This skill does NOT hardcode expected values. Instead:
 
 1. **Expected values** come from the [SAP Testing Automation Framework (STAF)](https://github.com/Azure/sap-automation-qa) YAML check definitions, fetched from GitHub at runtime.
-2. **Actual values** come from blob config files collected weekly by the collector cron job.
-3. **Fallback**: If blob configs are unavailable, report which checks could not be evaluated.
+2. **Actual values** come from three sources (tried in order):
+   - **Azure ARM API** — for infrastructure checks (VM SKU, NICs, disks, Advisor). Always available.
+   - **Command proxy** — for live OS/HANA data (sysctl, df, HDB info, sapcontrol). Available when proxy is deployed.
+   - **Blob config files** — for offline STAF checks (sysctl, kernel params, HANA global.ini). Available when collector is deployed.
+   - If none of the above provides data for a check, report it as "NOT EVALUATED".
 
 Every check in this skill comes from Microsoft's official STAF. Nothing custom.
 
-This ensures checks stay current as Microsoft updates STAF, without requiring skill maintenance.
-
 ## Data Sources
 
-| Category | Source |
-|----------|--------|
-| Check definitions (expected values) | GitHub: `Azure/sap-automation-qa` YAML files |
-| OS/SAP parameters (actual values) | Blob config files via config proxy (weekly collector) |
-| Cluster config (actual values) | Blob config files via config proxy (weekly collector) |
+| Category | Primary Source | Fallback |
+|----------|---------------|----------|
+| Check definitions (expected values) | GitHub: `Azure/sap-automation-qa` YAML files | — |
+| Infrastructure (VM SKU, AccelNet, disks) | Azure ARM API via built-in tools | — |
+| OS/SAP parameters (sysctl, memory, disk space) | Command proxy (`/api/command`) for live data | Blob config files via `/api/configs` |
+| HANA config (version, processes) | Command proxy (`hdb_info`, `hdb_version`) | Blob config files |
+| Cluster config (stonith, corosync) | Command proxy (`crm_mon`) | Blob config files |
+
+## Proxy Authentication
+
+**IMPORTANT:** Do NOT use IMDS tokens or ManagedIdentityCredential — they are not available in the sandbox. Use API key from Team Onboarding context.
+
+```python
+import requests, json
+
+# Values from Team Onboarding context:
+PROXY_URL = "..."     # Proxy URL from Data Sources
+API_KEY = "..."       # API key from Proxy auth section  
+SAP_SUB = "..."       # SAP Subscription from Agent Identity
+
+def run_proxy_command(command_id, vm="AB1vm", rg="RG_SAP_CUS_AB1", sidadm=None, instance="00", sid=None):
+    """Run a single command via the proxy. Always pass subscription_id."""
+    body = {"vm": vm, "rg": rg, "command_id": command_id, "subscription_id": SAP_SUB}
+    if sidadm: body["sidadm"] = sidadm
+    if instance: body["instance"] = instance
+    if sid: body["sid"] = sid
+    resp = requests.post(f"{PROXY_URL}/api/command",
+        headers={"X-API-Key": API_KEY, "Content-Type": "application/json"},
+        json=body, timeout=180)
+    if resp.status_code == 200:
+        return resp.json().get("stdout", "")
+    return None
+
+def get_blob_configs(sid, hostname):
+    """Get collected config files from blob storage via config proxy."""
+    resp = requests.get(f"{PROXY_URL}/api/configs/{sid}/{hostname}",
+        headers={"X-API-Key": API_KEY}, timeout=60)
+    if resp.status_code == 200:
+        return resp.json().get("files", {})
+    return {}
+```
 
 ## Execution Steps
 
