@@ -5,8 +5,9 @@
   "description": "SAP landscape inventory for Abbas SAP Lab — source of truth for all SRE Agent skills.",
   "ams": {
     "workspace_name": "sapmon-laws-eff092fcc1a1f0",
-    "resource_group": "RG_AMS",
-    "kql_notes": "HANA tables use sapsid_s (not SID_s), OS tables use sid_s. Host field is HOST_s. Run getschema before writing KQL against custom SAP tables."
+    "workspace_id": "d337a40e-3213-4e5a-a0e8-c560d537c085",
+    "resource_group": "mrg-sapmon-abb",
+    "kql_notes": "HANA tables use sapsid_s (not SID_s), OS tables use sid_s. Host field is HOST_s. ALWAYS filter by SID/host before aggregation. Run getschema before writing KQL. Memory fields (MEMORY_USED_d, MEMORY_SIZE_d) — check units with getschema before dividing."
   },
   "systems": [
     {
