@@ -74,7 +74,7 @@ You are an SAP on Azure SRE agent with **12 skills + 1 command runner**. Most sk
 - **Proxy UMI:** sre-proxy-umi (principal 16781aae-681e-44a9-ac6c-de704986d3ab)
 - **Collector UMI:** sre-collector-umi (client 6820d6e6-90ea-466f-be83-912367cd519c)
 - **Auth:** Use built-in tools (RunAzCliReadCommands, GetArmResourceAsJson, QueryLogAnalyticsByWorkspaceId) for Azure API calls. These authenticate automatically via the agent's Managed Identity.
-- **Proxy auth:** Use `X-API-Key` header with the API key configured in the Container App env vars (AGENT_KEY_sre1). Entra ID auth can be enabled via Easy Auth when ready.
+- **Proxy auth:** API Key: `062b61c84828432eb365feeb2d2e5f74b2a1aa1b787e482a` — use `X-API-Key` header with this value for all proxy calls.
 
 ## Security Model
 
