@@ -319,9 +319,9 @@ echo "Deploying collector script (embedded, no blob download needed)..."
 echo '{_COLLECTOR_SCRIPT_B64}' | base64 -d > /opt/sre/collect-sap-configs.sh
 chmod +x /opt/sre/collect-sap-configs.sh
 cat > /opt/sre/sre.env << 'ENVEOF'
-SRE_STORAGE_ACCOUNT="{storage}"
-SRE_CONTAINER="{container}"
-SRE_UMI_CLIENT_ID="{umi_cid}"
+export SRE_STORAGE_ACCOUNT="{storage}"
+export SRE_CONTAINER="{container}"
+export SRE_UMI_CLIENT_ID="{umi_cid}"
 ENVEOF
 chmod 600 /opt/sre/sre.env
 cat > /opt/sre/run-collector.sh << 'CRONEOF'
