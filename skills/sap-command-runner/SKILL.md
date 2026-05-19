@@ -32,23 +32,33 @@ Display command output **exactly as it appears on the VM** — preserve formatti
 ```python
 import requests
 
-# PROXY_URL and PROXY_KEY come from Team Onboarding context
+# PROXY_URL and PROXY_APP_ID come from Team Onboarding context
+
+def get_proxy_token():
+    """Get Entra ID token for the proxy audience using the agent's Managed Identity."""
+    resp = requests.get("http://169.254.169.254/metadata/identity/oauth2/token",
+        params={"api-version": "2019-08-01", "resource": PROXY_APP_ID},
+        headers={"Metadata": "true"}, timeout=10)
+    resp.raise_for_status()
+    return resp.json()["access_token"]
 
 def run_command(vm_name, rg, command_id, sidadm=None, instance="00", sid=None):
+    token = get_proxy_token()
     body = {"vm": vm_name, "rg": rg, "command_id": command_id}
     if sidadm: body["sidadm"] = sidadm
     if instance: body["instance"] = instance
     if sid: body["sid"] = sid
     resp = requests.post(f"{PROXY_URL}/api/command",
-        headers={"x-api-key": PROXY_KEY, "Content-Type": "application/json"},
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         json=body, timeout=120)
     if resp.status_code == 200:
         return resp.json().get("stdout", "")
     return f"ERROR: {resp.status_code} — {resp.text}"
 
 def list_available_commands():
+    token = get_proxy_token()
     resp = requests.get(f"{PROXY_URL}/api/commands",
-        headers={"x-api-key": PROXY_KEY}, timeout=30)
+        headers={"Authorization": f"Bearer {token}"}, timeout=30)
     return resp.json().get("commands", {}) if resp.status_code == 200 else {}
 ```
 

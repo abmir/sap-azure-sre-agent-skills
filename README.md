@@ -270,11 +270,30 @@ rg-sre-ops  (or custom name via -ResourceGroupName)
 
 ## Security
 
-- **14 read-only commands only:** Hardcoded allowlist in proxy source code. No arbitrary shell execution.
-- **Zero changes to SAP:** All commands are read-only — `crm_mon`, `df`, `free`, `HDB info`, etc. Nothing modifies SAP state.
-- **No shared keys:** Storage uses identity-based auth (RBAC). Shared key access disabled.
-- **Managed Identity bound:** UMI only works from the Container App — cannot be used from any other context.
-- **API key required:** Every proxy call requires `x-api-key` header.
-- **Input sanitization:** All parameters regex-validated and shell-escaped (`shlex.quote`).
-- **Network isolation:** Storage firewall Deny by default. Container App accesses storage via VNet service endpoint.
-- **Audit logging:** Every command execution logged with caller, VM, command_id, timestamp.
+### Identity Separation
+
+```
+SRE Agent MI                         Proxy UMI (sre-ops-umi)
+    │                                       │
+    │ Can: get Entra ID token               │ Can: run 14 read-only commands
+    │      to call proxy                    │      on SAP VMs via Run Command
+    │                                       │
+    │ Cannot: access SAP VMs directly       │ Cannot: be used outside
+    │         run any VM commands            │         the Container App
+    │         bypass the proxy              │
+```
+
+The SRE Agent has **zero direct access** to SAP VMs. It can only call the proxy, which enforces the command allowlist.
+
+### Defense in Depth
+
+| Layer | Protection |
+|-------|-----------|
+| **Authentication** | Entra ID bearer token required. Only the SRE Agent MI can obtain a valid token for the proxy audience. API key available as fallback for testing. |
+| **Authorization** | Custom RBAC role (`Custom - SAP SRE Agent Operator`) grants only read + runCommand — no VM delete/restart/resize. |
+| **Command allowlist** | 14 read-only commands hardcoded in proxy source code. No arbitrary shell execution. |
+| **Identity binding** | Proxy UMI is bound to the Container App — cannot be used from any other context. |
+| **Network** | Storage firewall Deny by default. Container App uses VNet service endpoint. |
+| **Input validation** | All parameters regex-validated and shell-escaped (`shlex.quote`). |
+| **Audit** | Every command execution logged with caller identity, VM, command_id, timestamp. |
+| **Zero SAP mutation** | All 14 commands are read-only. Nothing modifies SAP state, HANA data, or cluster config. |

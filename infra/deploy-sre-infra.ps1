@@ -255,48 +255,99 @@ if ($LASTEXITCODE -ne 0) { throw "Failed to create Container App '$ProxyName'" }
 $fqdn = az containerapp show -n $ProxyName -g $RG --query "properties.configuration.ingress.fqdn" -o tsv
 Write-OK "$ProxyName deployed (https://$fqdn)"
 
-# ── Step 8: Summary ──
-Write-Step "Step 8/8 — Complete"
+# ── Step 8: Entra ID Authentication ──
+Write-Step "Step 8/10 — Entra ID Authentication"
+
+# Get tenant ID
+$tenantId = az account show --query tenantId -o tsv
+
+# Create App Registration for the proxy
+$existingApp = az ad app list --display-name "SAP SRE Proxy - $RG" --query "[0].appId" -o tsv 2>$null
+if ($existingApp) {
+    $ProxyAppId = $existingApp
+    Write-OK "App Registration exists: $ProxyAppId"
+} else {
+    $appJson = az ad app create --display-name "SAP SRE Proxy - $RG" `
+        --sign-in-audience AzureADMyOrg `
+        --identifier-uris "api://sap-sre-proxy-$($SubscriptionId.Substring(0,8))" `
+        -o json
+    $ProxyAppId = ($appJson | ConvertFrom-Json).appId
+    if (-not $ProxyAppId) { throw "Failed to create App Registration" }
+    # Create Service Principal for the App Registration
+    az ad sp create --id $ProxyAppId --output none 2>$null
+    Write-OK "App Registration created: $ProxyAppId"
+}
+
+# Enable Easy Auth on Container App
+az containerapp auth microsoft update `
+    --name $ProxyName -g $RG `
+    --client-id $ProxyAppId `
+    --issuer "https://login.microsoftonline.com/$tenantId/v2.0" `
+    --yes --output none 2>$null
+
+az containerapp auth update `
+    --name $ProxyName -g $RG `
+    --unauthenticated-client-action Return401 `
+    --enabled true --output none 2>$null
+
+Write-OK "Entra ID authentication enabled (unauthenticated requests return 401)"
+Write-Host "   SRE Agent MI must acquire a token for audience: api://sap-sre-proxy-$($SubscriptionId.Substring(0,8))" -ForegroundColor Gray
+Write-Host "   Health endpoint (/api/health) is excluded from auth for probes" -ForegroundColor Gray
+
+# ── Step 9: Custom RBAC Role ──
+Write-Step "Step 9/10 — Custom RBAC Role"
+
+$roleName = "Custom - SAP SRE Agent Operator"
+$existingRole = az role definition list --name $roleName --query "[0].id" -o tsv 2>$null
+if ($existingRole) {
+    Write-OK "Custom role '$roleName' already exists"
+} else {
+    $roleFile = Join-Path $RepoRoot "infra\sap-sre-agent-role.json"
+    if (Test-Path $roleFile) {
+        $roleContent = Get-Content $roleFile -Raw
+        $roleContent = $roleContent.Replace("<YOUR-SUBSCRIPTION-ID>", $SubscriptionId)
+        $roleContent | Set-Content $roleFile
+        az role definition create --role-definition $roleFile --output none 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-OK "Custom role '$roleName' created"
+        } else {
+            Write-Warn "Custom role creation failed — create manually from infra/sap-sre-agent-role.json"
+        }
+    } else {
+        Write-Warn "Role definition file not found: $roleFile"
+    }
+}
+
+# ── Step 10: Summary ──
+Write-Step "Step 10/10 — Complete"
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Green
 Write-Host " DEPLOYMENT COMPLETE" -ForegroundColor Green
 Write-Host "============================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "  SRE Proxy:      https://$fqdn"
-Write-Host "  API Key:        $API_KEY"
-Write-Host "  UMI Client ID:  $UMI_CLIENT_ID"
-Write-Host "  UMI Principal:  $UMI_PRINCIPAL_ID"
-Write-Host "  UMI Resource:   $UMI_ID"
-Write-Host "  Storage:        $StorageAccountName"
-Write-Host "  ACR:            $AcrName.azurecr.io"
-Write-Host "  VNet:           $VNetName ($VNetAddressSpace)"
-Write-Host "  Subnet:         $SubnetName ($SubnetPrefix)"
-Write-Host ""
-Write-Host "API Endpoints:" -ForegroundColor Yellow
-Write-Host "  GET  /api/registry                          Landscape inventory"
-Write-Host "  GET  /api/config/{sid}/{hostname}/{path}    Single config file"
-Write-Host "  GET  /api/configs/{sid}/{hostname}          All configs for a VM"
-Write-Host "  GET  /api/configs/{sid}                     All configs for a system"
-Write-Host "  GET  /api/commands                          List allowed commands"
-Write-Host "  GET  /api/diag                              MI + ARM connectivity test"
-Write-Host "  POST /api/command                           Execute command on VM"
-Write-Host "  GET  /api/health                            Health check"
+Write-Host "  SRE Proxy:       https://$fqdn"
+Write-Host "  Auth:            Entra ID (App ID: $ProxyAppId)"
+Write-Host "  Token Audience:  api://sap-sre-proxy-$($SubscriptionId.Substring(0,8))"
+Write-Host "  API Key:         $API_KEY (fallback — use Entra ID for production)"
+Write-Host "  UMI Client ID:   $UMI_CLIENT_ID"
+Write-Host "  UMI Principal:   $UMI_PRINCIPAL_ID"
+Write-Host "  UMI Resource:    $UMI_ID"
+Write-Host "  Storage:         $StorageAccountName"
+Write-Host "  Custom RBAC:     $roleName"
 Write-Host ""
 Write-Host "Next Steps:" -ForegroundColor Yellow
-Write-Host "  1. Assign RBAC on each SAP resource group:" -ForegroundColor Yellow
-Write-Host "     az role assignment create --assignee-object-id $UMI_PRINCIPAL_ID --assignee-principal-type ServicePrincipal --role Reader --scope /subscriptions/<sap-sub>/resourceGroups/<sap-rg>"
-Write-Host "     az role assignment create --assignee-object-id $UMI_PRINCIPAL_ID --assignee-principal-type ServicePrincipal --role `"Virtual Machine Contributor`" --scope /subscriptions/<sap-sub>/resourceGroups/<sap-rg>"
+Write-Host "  1. Grant proxy UMI access to SAP resource groups:" -ForegroundColor Yellow
+Write-Host "     See README Step 4 — use custom role '$roleName'" -ForegroundColor Yellow
 Write-Host ""
-Write-Host "  2. Add SAP VM subnet(s) to storage firewall:" -ForegroundColor Yellow
-Write-Host "     az storage account network-rule add --account-name $StorageAccountName --subnet <sap-vm-subnet-resource-id>"
+Write-Host "  2. Grant SRE Agent MI permission to call the proxy:" -ForegroundColor Yellow
+Write-Host "     az ad sp create --id $ProxyAppId   # if not already created" -ForegroundColor Yellow
+Write-Host "     # Then assign the SRE Agent's MI as an authorized caller" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "  3. SRE Agent portal (sre.azure.com):" -ForegroundColor Yellow
-Write-Host "     - Import skills via Plugin Marketplace"
-Write-Host "     - Add managed resources (SAP RGs + AMS RG)"
-Write-Host "     - Upload sap-landscape-inventory.json as Knowledge Source"
-Write-Host "     - Paste team onboarding content"
-Write-Host ""
-Write-Host "  4. Deploy collector to SAP VMs (see README Step 4)" -ForegroundColor Yellow
+Write-Host "     - Import skills via Plugin Marketplace (mcaps-microsoft/sap-azure-sre-agent)" -ForegroundColor Yellow
+Write-Host "     - Add managed resources (SAP RGs + AMS RG)" -ForegroundColor Yellow
+Write-Host "     - Upload sap-landscape-inventory.json as Knowledge Source" -ForegroundColor Yellow
+Write-Host "     - Paste team onboarding with proxy URL + App ID" -ForegroundColor Yellow
 Write-Host ""
 
 # Clean up deployer IP from storage firewall
