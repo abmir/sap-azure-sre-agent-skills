@@ -71,13 +71,35 @@ Override defaults: `-ResourceGroupName`, `-Location`, `-VNetAddressSpace`.
 
 ### 4. Grant Access to SAP Resource Groups
 
-Use the UMI Principal ID from the deploy script output:
+Create a least-privilege custom role and assign it to the UMI (use values from deploy script output):
 
 ```powershell
-# Assign access to each SAP resource group (replace values from deploy output)
 $umi = "<UMI-PRINCIPAL-ID>"
 $sub = "<SAP-SUBSCRIPTION-ID>"
 
+# Create custom role (one-time) — grants read + VM Run Command only, no delete/restart
+$roleDef = Get-Content infra/sap-sre-agent-role.json -Raw
+$roleDef = $roleDef.Replace("<YOUR-SUBSCRIPTION-ID>", $sub)
+$roleDef | Set-Content infra/sap-sre-agent-role.json
+az role definition create --role-definition infra/sap-sre-agent-role.json
+
+# Assign to each SAP resource group
+foreach ($rg in @("RG_SAP_ECP", "RG_SAP_QAS", "RG_SAP_DEV")) {
+    az role assignment create --assignee-object-id $umi `
+        --assignee-principal-type ServicePrincipal `
+        --role "SAP SRE Agent Operator" --scope "/subscriptions/$sub/resourceGroups/$rg"
+}
+```
+
+See [`infra/sap-sre-agent-role.json`](infra/sap-sre-agent-role.json) for the full role definition.
+
+<details>
+<summary>Quick setup alternative (less secure)</summary>
+
+For demos or quick testing, you can use built-in roles instead of creating a custom role.
+**Not recommended for production** — `Virtual Machine Contributor` grants VM delete/restart permissions.
+
+```powershell
 foreach ($rg in @("RG_SAP_ECP", "RG_SAP_QAS", "RG_SAP_DEV")) {
     az role assignment create --assignee-object-id $umi `
         --assignee-principal-type ServicePrincipal `
@@ -88,10 +110,7 @@ foreach ($rg in @("RG_SAP_ECP", "RG_SAP_QAS", "RG_SAP_DEV")) {
 }
 ```
 
-> **Security note:** `Virtual Machine Contributor` is shown here for quick setup but grants more permissions
-> than needed (including VM delete/restart). For production, create a custom RBAC role with only
-> `Microsoft.Compute/virtualMachines/runCommand/action` + read permissions. The proxy enforces a hardcoded
-> allowlist of 14 read-only commands — no arbitrary shell execution is possible through the proxy.
+</details>
 
 ### 5. Update Team Onboarding
 

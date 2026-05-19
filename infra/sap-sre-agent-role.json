@@ -1,0 +1,19 @@
+{
+  "Name": "SAP SRE Agent Operator",
+  "Description": "Minimum permissions for SAP SRE Agent to query VM properties and execute read-only run commands on SAP VMs. The proxy enforces a hardcoded allowlist of 14 read-only commands — no arbitrary shell execution.",
+  "Actions": [
+    "Microsoft.Compute/virtualMachines/read",
+    "Microsoft.Compute/virtualMachines/instanceView/read",
+    "Microsoft.Compute/virtualMachines/runCommand/action",
+    "Microsoft.Compute/disks/read",
+    "Microsoft.Network/networkInterfaces/read",
+    "Microsoft.Network/loadBalancers/read",
+    "Microsoft.Resources/subscriptions/resourceGroups/read"
+  ],
+  "NotActions": [],
+  "DataActions": [],
+  "NotDataActions": [],
+  "AssignableScopes": [
+    "/subscriptions/<YOUR-SUBSCRIPTION-ID>"
+  ]
+}
