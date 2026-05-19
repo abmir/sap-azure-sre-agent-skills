@@ -8,6 +8,9 @@ __pycache__/
 local.settings.json
 .python_packages/
 
+# Build artifacts (collector copied to proxy dir during ACR build)
+proxy/collect-sap-configs.sh
+
 # Secrets & customer-specific configs
 .env
 config/*.secret.yaml

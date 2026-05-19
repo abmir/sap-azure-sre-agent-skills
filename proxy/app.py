@@ -258,8 +258,31 @@ def validate_input(vm, rg, sidadm, instance):
     return ""
 
 
+# ─── Embedded collector script (loaded at startup, base64-encoded for safe transport) ──
+import base64 as _b64
+_COLLECTOR_SCRIPT_B64 = ""
+
+def _load_collector_script():
+    """Load collector script at startup and base64-encode it for VM deployment."""
+    global _COLLECTOR_SCRIPT_B64
+    import pathlib
+    script_path = pathlib.Path(__file__).parent.parent / "collector" / "collect-sap-configs.sh"
+    if not script_path.exists():
+        # Fallback: try same directory (Docker build may flatten structure)
+        script_path = pathlib.Path(__file__).parent / "collect-sap-configs.sh"
+    if script_path.exists():
+        _COLLECTOR_SCRIPT_B64 = _b64.b64encode(script_path.read_bytes()).decode("ascii")
+        logger.info(f"Collector script loaded: {len(_COLLECTOR_SCRIPT_B64)} bytes (base64)")
+    else:
+        logger.warning("Collector script not found — deploy_collector will fail")
+
+_load_collector_script()
+
+
 def build_deploy_collector_script(body):
-    """Build shell script to deploy config collector + cron job to a SAP VM."""
+    """Build shell script to deploy config collector + cron job to a SAP VM.
+    The collector script is embedded inline (base64-encoded) — no blob download needed.
+    This eliminates the storage firewall dependency for deployment."""
     storage = body.get("storage_account", "").strip()
     umi_cid = body.get("umi_client_id", "").strip()
     sid = body.get("sid", "").strip().upper()
@@ -274,6 +297,8 @@ def build_deploy_collector_script(body):
         return None, "deploy_collector requires: storage_account, umi_client_id, roles"
     if roles != "sbd" and not sid:
         return None, "deploy_collector requires: sid (unless roles=sbd)"
+    if not _COLLECTOR_SCRIPT_B64:
+        return None, "Collector script not loaded in proxy — rebuild the container image with collector/collect-sap-configs.sh"
     for name, val in [("storage_account", storage), ("umi_client_id", umi_cid), ("sid", sid), ("roles", roles)]:
         if val and not re.match(r'^[a-zA-Z0-9_,\-]+$', val):
             return None, f"Invalid characters in {name}"
@@ -290,14 +315,8 @@ if [ -d /opt/sre ]; then
     echo "NOTICE: /opt/sre exists — updating scripts and config (logs preserved)"
 fi
 mkdir -p /opt/sre
-echo "Downloading collector script..."
-az login --identity --username {shlex.quote(umi_cid)} --output none 2>/dev/null
-az storage blob download \\
-    --account-name {shlex.quote(storage)} \\
-    --container-name {shlex.quote(container)} \\
-    --name scripts/collect-sap-configs.sh \\
-    --file /opt/sre/collect-sap-configs.sh \\
-    --auth-mode login --output none 2>/dev/null
+echo "Deploying collector script (embedded, no blob download needed)..."
+echo '{_COLLECTOR_SCRIPT_B64}' | base64 -d > /opt/sre/collect-sap-configs.sh
 chmod +x /opt/sre/collect-sap-configs.sh
 cat > /opt/sre/sre.env << 'ENVEOF'
 SRE_STORAGE_ACCOUNT="{storage}"
@@ -324,7 +343,7 @@ cat > /etc/logrotate.d/sre-config-collect << 'LREOF'
     create 0640 root root
 }}
 LREOF
-echo "SUCCESS: Collector deployed. Cron set for Sunday 2:00 AM."
+echo "SUCCESS: Collector deployed (embedded script, no blob dependency)."
 echo "Files: /opt/sre/collect-sap-configs.sh, /opt/sre/sre.env, /opt/sre/run-collector.sh"
 echo "Cron: /etc/cron.d/sre-collector | Log: /var/log/sre-config-collect.log"
 """

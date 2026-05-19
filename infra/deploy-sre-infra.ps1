@@ -195,8 +195,14 @@ az role assignment create --assignee-object-id $UMI_PRINCIPAL_ID --assignee-prin
     --role AcrPull --scope $acrScope --output none 2>$null
 Write-OK "UMI AcrPull role assigned"
 
-# Build container image in ACR
+# Build container image in ACR (copy collector script into build context first)
 Write-Host "   Building container image in ACR..." -ForegroundColor Gray
+if (Test-Path $CollectorScript) {
+    Copy-Item $CollectorScript (Join-Path $ProxyDir "collect-sap-configs.sh") -Force
+    Write-OK "Collector script copied to build context"
+} else {
+    Write-Warn "Collector script not found at $CollectorScript — deploy_collector will not work"
+}
 az acr build --registry $AcrName -t sre-proxy:latest $ProxyDir --no-logs --output none
 if ($LASTEXITCODE -ne 0) { throw "Failed to build container image" }
 Write-OK "Image built: $AcrName.azurecr.io/sre-proxy:latest"
