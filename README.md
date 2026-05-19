@@ -59,7 +59,7 @@ Deploy the command proxy to unlock live VM queries, config validation, and the r
 The deploy script creates all Azure resources and deploys the container app in one step (~5 min):
 
 ```powershell
-git clone https://github.com/mcaps-microsoft/sap-azure-sre-agent.git
+git clone -b dev https://github.com/mcaps-microsoft/sap-azure-sre-agent.git
 cd sap-azure-sre-agent
 
 az login
