@@ -137,12 +137,27 @@ def fetch_staf_checks(os_type, role, db_type, ha_type, ha_agent):
     return json.dumps(applicable)  # Return compact JSON to LLM
 ```
 
+**YAML schema note:** STAF YAML files may use different top-level keys. The parser handles:
+- `checks:` as root list key (most common)
+- Direct list at root level (no wrapper key)
+- Nested under category-specific keys
+
+The provided code handles all three patterns via the fallback: `content.get("checks", content if isinstance(content, list) else [])`
+
 **Context needed for filtering** (from landscape registry):
 - `os_type`: "SLES_SAP" or "REDHAT"
 - `role`: "DB", "SCS", "ERS", "APP", "PAS"
 - `db_type`: "HANA", "Db2"
 - `ha_type`: "scale_up", "scale_out", or "false"
 - `ha_agent`: "AFA" (Azure Fence Agent) or "ISCSI" (SBD)
+
+### Single-Server Systems (no HA)
+
+When `ha_type` is `"false"` (no HA cluster):
+- **Skip** all Pacemaker/corosync/SBD/fencing checks — report as `SKIP (single-server, no HA)`
+- **Skip** HSR-related HANA checks (replication hooks, takeover settings)
+- **Still validate:** HANA global.ini, OS kernel params, network, VM infrastructure, SAP profiles
+- If cluster config files exist but are empty (e.g., `cluster/crm-status.txt` = 0 bytes), this confirms no cluster is configured — do NOT report as "NOT EVALUATED"
 
 ### Step 2: Get Actual Values from Blob Config Files
 
@@ -157,12 +172,44 @@ def get_configs(sid, hostname):
     return {}
 ```
 
-Map STAF check commands to the corresponding config file content. For example:
-- `sysctl -n vm.swappiness` → look in `os/sysctl-runtime.txt`
-- `corosync-cmapctl -g runtime.config.totem.token` → look in `cluster/corosync.conf`
-- HANA global.ini params → look in `hana/global.ini`
+Map STAF check commands to the corresponding config file content using the reference table below.
+
+### Config File Mapping Reference
+
+| STAF Command Pattern | Config File Path | Parse Method |
+|---|---|---|
+| `sysctl -n <param>` | `os/sysctl-runtime.txt` | Key-value: `param = value` |
+| `cat /sys/kernel/mm/transparent_hugepage/enabled` | `os/thp-status.txt` | Bracketed active: `[never]` |
+| `cat /etc/waagent.conf` | `os/waagent.conf` | Key-value: `Key=Value` |
+| `systemctl show -p DefaultTasksMax` | `os/systemd-defaults.txt` | `DefaultTasksMax=<value>` |
+| `lsmod \| grep softdog` | `os/lsmod-softdog.txt` | Check "not loaded" |
+| `cat /etc/fstab` | `os/fstab` | Mount entries |
+| `hdbsql ... global.ini` | `hana/global.ini` + `hana/db-specific/global.ini` | INI format: `[section]` then `key = value` |
+| `corosync-cmapctl` | `cluster/corosync-quorum.txt` | Key-value pairs |
+| `crm_mon` | `cluster/crm-status.txt` | XML/text output |
+| `chronyc tracking` | `os/chrony-tracking.txt` | Labeled fields |
+| `cat /etc/chrony.conf` | `os/chrony.conf` | Config directives |
+| `lsblk` | `os/lsblk.txt` | Tabular device listing |
+| `df -Th` | `os/disk-usage.txt` | Tabular filesystem listing |
+| IO scheduler | `os/io-scheduler.txt` | `[active]` per device |
+| Network drivers | `os/network-drivers.txt` | `eth0: driver=<name>` |
+| SAP profiles | `sap-profiles/DEFAULT.PFL`, `sap-profiles/<SID>_<INST>_<HOST>` | SAP profile format |
+| Limits | `os/limits.conf`, `os/limits.d/*.conf` | Limits format |
+| Tuned profile | `os/tuned-profile.txt` | Active profile name |
+| `fstrim.timer` | `os/fstrim-status.txt` | Active/not found |
 
 If config files are unavailable, report the check as "NOT EVALUATED — config data not collected".
+
+### Parsing HANA INI Files
+
+HANA configuration is split across multiple INI files with section-scoped parameters:
+- `hana/global.ini` — system-wide defaults
+- `hana/db-specific/global.ini` — database-specific overrides (takes precedence)
+- `hana/nameserver.ini`, `hana/indexserver.ini` — service-specific configs
+
+**Merge order** (last wins): `global.ini` → `db-specific/global.ini`
+
+**Key format:** Parse as `[section]/parameter = value`. For example, `log_mode` under `[persistence]` becomes key `persistence/log_mode`.
 
 ### Step 3: Compare Actual vs Expected
 
@@ -174,6 +221,8 @@ For each check, compare the config file value against the STAF expected value us
 | `range` | Actual value within [min, max] |
 | `list` | Actual value in allowed list |
 | `min_list` | Each value in space-separated list >= corresponding minimum |
+
+**Note on numeric comparisons:** Some STAF expected values (e.g., `kernel.shmall`, `kernel.shmmax`) are unsigned 64-bit maximums (18446744073709551615). Python handles arbitrary-precision integers natively. Use `int()` conversion for all numeric comparisons — do NOT use `float()` as it loses precision for large values.
 
 ### Step 4: Output
 
@@ -202,6 +251,30 @@ AB1 — STAF Config Compliance
 ══════════════════════════════════════════
   SUMMARY: 47/49 PASS, 0 WARN, 2 FAIL
 ```
+
+### Severity Adjustment by System Criticality
+
+When the system is tagged as `dev` or `test` (from landscape registry `criticality` field):
+- Downgrade disk-type failures from HIGH → INFO with note: "Acceptable for dev; upgrade before production promotion"
+- Downgrade boot diagnostics from MEDIUM → LOW
+- Keep all OS/kernel and HANA checks at original severity (these apply regardless of environment)
+
+### ARM-Based Infrastructure Checks (supplemental)
+
+These checks use Azure ARM API data (not STAF YAMLs) and should always be included:
+
+| ID | Check | Source | Expected | Severity |
+|---|---|---|---|---|
+| INFRA-DISK-001 | OS disk type | ARM storageProfile | Premium_LRS or better | HIGH (prod) / INFO (dev) |
+| INFRA-DISK-002 | HANA data disk type | ARM dataDisks | Premium_LRS or Ultra | HIGH |
+| INFRA-DISK-003 | HANA log disk type | ARM dataDisks | Premium_LRS or Ultra (Write Accelerator for M-series) | HIGH |
+| INFRA-NET-001 | Accelerated Networking | ARM NIC | enableAcceleratedNetworking=true | HIGH |
+| INFRA-BOOT-001 | Boot diagnostics | ARM diagnosticsProfile | enabled=true | MEDIUM |
+| INFRA-AGENT-001 | waagent ResourceDisk.EnableSwap | os/waagent.conf | n | MEDIUM |
+
+**Note:** The waagent swap check (`ResourceDisk.EnableSwap=n`) is a critical SAP on Azure best practice per SAP Note 1999997. If not present in STAF definitions, always include it as a supplemental check.
+
+**Disk type severity:** Adjust based on system criticality. Standard_LRS is acceptable for dev/test but a blocker for production.
 
 ## STAF Check Categories
 
