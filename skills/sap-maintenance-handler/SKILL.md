@@ -1,18 +1,14 @@
 ---
-name: sap-maintenance-autopilot
-description: "Handles Azure scheduled maintenance events autonomously. Detects VM reboot/redeploy events via Azure Scheduled Events API, initiates graceful SAP shutdown, triggers HSR takeover for HA systems, acknowledges event, monitors restart, and validates recovery. Zero-downtime maintenance."
+name: sap-maintenance-handler
+description: "Handles Azure scheduled maintenance events. Detects VM reboot/redeploy events via Azure Scheduled Events API, coordinates graceful SAP shutdown, and validates recovery. Requires command proxy for VM operations."
 tools:
     - ExecutePythonCode
-    - GetCurrentUtcTime
-    - SearchMemory
-    - SearchIncidentKnowledge
-    - MCP-MSLearnDocs_microsoft_docs_search
-    - MCP-MSLearnDocs_microsoft_docs_fetch
-    - GetArmResourceAsJson
     - RunAzCliReadCommands
+    - GetArmResourceAsJson
     - GetActivityLogsSummary
-    - GetMetricTimeSeriesElementsForAzureResource
     - QueryLogAnalyticsByWorkspaceId
+    - GetMetricTimeSeriesElementsForAzureResource
+    - CreateScheduledMonitoringTask
     - CreateScheduledMonitoringTask
 ---
 

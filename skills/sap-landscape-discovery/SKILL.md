@@ -1,14 +1,8 @@
 ---
 name: sap-landscape-discovery
-description: "Discovers and maintains a trustworthy SAP system inventory across SIDs, roles, hosts, regions, VM sizes, zones, HA/DR topology, and monitoring coverage. Foundation data consumed by all other skills. Also validates VM power state on demand."
+description: "Discovers and maintains SAP system inventory across SIDs, roles, hosts, regions, VM sizes, zones, HA topology, and monitoring coverage. Foundation data consumed by all other skills. Validates VM power state on demand. No proxy required — uses Azure Resource Graph and ARM APIs."
 tools:
     - ExecutePythonCode
-    - GetCurrentUtcTime
-    - SearchMemory
-    - SearchIncidentKnowledge
-    - MCP-MSLearnDocs_microsoft_docs_search
-    - MCP-MSLearnDocs_microsoft_docs_fetch
-    - CheckIfResourceExists
     - RunAzCliReadCommands
     - GetArmResourceAsJson
     - QueryLogAnalyticsByWorkspaceId
@@ -60,6 +54,9 @@ import requests, json
 
 # PROXY_URL: Use config_proxy_url from Team Onboarding
 # PROXY_KEY: Use config_proxy_api_key from Team Onboarding
+
+# COMMAND_PROXY_URL: Use command_proxy_url from Team Onboarding
+# COMMAND_PROXY_KEY: Use command_proxy_api_key from Team Onboarding
 
 def get_mi_token(resource):
     resp = requests.get("http://169.254.169.254/metadata/identity/oauth2/token",

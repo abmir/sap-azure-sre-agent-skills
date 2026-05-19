@@ -1,21 +1,14 @@
 ---
 name: sap-performance-diagnostics
-description: "Diagnoses SAP system performance issues across HANA database, SAP application, and Azure storage layers. Covers memory pressure, blocking transactions, long-running SQL, work process utilization, dialog response time, disk IOPS/MBPS throttling, Write Accelerator, and HANA savepoint duration."
+description: "Diagnoses SAP system performance issues across HANA database, SAP application, and Azure storage layers. Covers memory pressure, disk IOPS/MBPS throttling, Write Accelerator, and HANA savepoint duration. Uses AMS telemetry; enriched with live VM data when command proxy is available."
 tools:
     - ExecutePythonCode
-    - GetCurrentUtcTime
-    - SearchMemory
-    - SearchIncidentKnowledge
-    - MCP-MSLearnDocs_microsoft_docs_search
-    - MCP-MSLearnDocs_microsoft_docs_fetch
-    - GetMetricTimeSeriesElementsForAzureResource
-    - ListAvailableMetrics
-    - GetDimensionNames
-    - QueryLogAnalyticsByWorkspaceId
-    - QueryLogAnalyticsByResourceId
-    - ValidateQuery
     - RunAzCliReadCommands
     - GetArmResourceAsJson
+    - QueryLogAnalyticsByWorkspaceId
+    - GetMetricTimeSeriesElementsForAzureResource
+    - PlotAreaChartWithCorrelation
+    - PlotBarChart
     - PlotScatter
     - PlotAreaChartWithCorrelation
     - PlotBarChart
@@ -54,6 +47,9 @@ from datetime import datetime, timedelta, timezone
 # PROXY_URL: Use config_proxy_url from Team Onboarding
 # PROXY_KEY: Use config_proxy_api_key from Team Onboarding
 
+# COMMAND_PROXY_URL: Use command_proxy_url from Team Onboarding
+# COMMAND_PROXY_KEY: Use command_proxy_api_key from Team Onboarding
+
 def get_mi_token(resource):
     resp = requests.get("http://169.254.169.254/metadata/identity/oauth2/token",
         params={"api-version": "2019-08-01", "resource": resource},
@@ -84,9 +80,41 @@ def get_landscape_registry():
     resp = requests.get(f"{PROXY_URL}/registry", headers={"x-api-key": PROXY_KEY}, timeout=30)
     return resp.json() if resp.status_code == 200 else None
 
-def get_vm_configs(sid, hostname):
+def get_vm_data_live(vm_name, rg, commands):
+    """Fetch VM data via command proxy batch (live, primary source)."""
+    resp = requests.post(f"{COMMAND_PROXY_URL}/batch",
+        headers={"x-api-key": COMMAND_PROXY_KEY, "Content-Type": "application/json"},
+        json={"vm": vm_name, "rg": rg, "commands": commands}, timeout=180)
+    if resp.status_code == 200:
+        results = {r["id"]: r["output"] for r in resp.json().get("results", [])}
+        return {"source": "live", "data": results, "timestamp": datetime.now(timezone.utc).isoformat()}
+    return None
+
+def get_vm_configs_fallback(sid, hostname):
+    """Fallback: fetch VM config data from blob (stale, 4-6h old)."""
     resp = requests.get(f"{PROXY_URL}/configs/{sid}/{hostname}", headers={"x-api-key": PROXY_KEY}, timeout=60)
-    return resp.json().get("files", {}) if resp.status_code == 200 else {}
+    if resp.status_code == 200:
+        data = resp.json()
+        return {"source": "blob", "data": data.get("files", {}), "timestamp": data.get("last_modified", "unknown")}
+    return {"source": "none", "data": {}, "timestamp": None}
+
+def get_vm_data(vm_name, rg, sid, hostname, commands):
+    """Try live command proxy first, fall back to blob."""
+    live = get_vm_data_live(vm_name, rg, commands)
+    if live:
+        return live
+    return get_vm_configs_fallback(sid, hostname)
+```
+
+**Standard commands for performance checks**:
+```python
+PERF_COMMANDS = [
+    {"id": "df_hana", "cmd": "df -h /hana/data /hana/log /hana/shared 2>/dev/null || df -h /"},
+    {"id": "free_mem", "cmd": "free -m"},
+    {"id": "lsblk_stripe", "cmd": "lsblk -o NAME,TYPE,SIZE,MOUNTPOINT,SCHED 2>/dev/null | head -30"},
+    {"id": "fstab", "cmd": "cat /etc/fstab | grep -v '^#' | grep -E 'hana|swap'"},
+    {"id": "global_ini", "cmd": "cat /hana/shared/*/global/hdb/custom/config/global.ini 2>/dev/null | head -50"},
+]
 ```
 
 ## Check Catalog
@@ -121,10 +149,10 @@ def get_vm_configs(sid, hostname):
 | STR-004 | Disk type + size (/hana/data, /hana/log) | ARM API | Premium SSD/Ultra/ANF |
 | STR-005 | Write Accelerator enabled | ARM API (disk caching) | Enabled for /hana/log |
 | STR-006 | HANA IO savepoint duration | `SapHana_IO_Savepoint_CL` | >300s AMBER, >600s RED |
-| STR-007 | Stripe config (lsblk) | Config proxy | /hana/data=256k, /hana/log=64k |
-| STR-008 | fstab mount options | Config proxy | nofail, nobarrier for data |
+| STR-007 | Stripe config (lsblk) | **Command proxy batch** (fallback: blob) | /hana/data=256k, /hana/log=64k |
+| STR-008 | fstab mount options | **Command proxy batch** (fallback: blob) | nofail, nobarrier for data |
 | STR-009 | ANF volume throughput | Azure Monitor (ANF) | provisioned vs consumed |
-| STR-010 | Data freshness | Config proxy last-modified | <24h GREEN, >48h RED |
+| STR-010 | Data freshness | Command proxy timestamp or blob last-modified | <24h GREEN, >48h RED |
 
 ## Query Optimization
 

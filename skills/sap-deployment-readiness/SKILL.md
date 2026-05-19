@@ -1,17 +1,11 @@
 ---
 name: sap-deployment-readiness
-description: "Pre-flight validation for SAP VM deployments and migrations. Checks VM SKU catalog availability, zone support, subscription quota, restrictions, and SAP/HANA certification against SAP Notes 1928533 and 2235581."
+description: "Pre-flight validation for SAP VM deployments and migrations. Checks VM SKU catalog availability, zone support, subscription quota, restrictions, and SAP/HANA certification against SAP Notes 1928533 and 2235581. No proxy required."
 tools:
     - ExecutePythonCode
-    - GetCurrentUtcTime
-    - SearchMemory
-    - SearchIncidentKnowledge
-    - MCP-MSLearnDocs_microsoft_docs_search
-    - MCP-MSLearnDocs_microsoft_docs_fetch
     - RunAzCliReadCommands
     - GetArmResourceAsJson
     - PlotBarChart
-    - PlotHeatmap
 ---
 
 ## Environment Configuration

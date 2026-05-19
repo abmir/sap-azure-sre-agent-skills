@@ -1,21 +1,60 @@
 # SAP Azure SRE Agent
 
-15 SRE skills for SAP HANA and NetWeaver workloads on Azure. Import via Plugin Marketplace in 1 click.
+12 SRE skills + 1 command runner for SAP HANA and NetWeaver on Azure. All read-only — zero changes to your SAP environment.
+
+**10 skills work on Day 1** with just Azure APIs. Deploy the optional command proxy to unlock live VM queries.
 
 ## Architecture
 
 ![SAP Azure SRE Agent Architecture](docs/sap-on-azure-sre-agent.png)
 
+## Skills
+
+| # | Skill | What it does | Proxy needed? |
+|---|-------|-------------|---------------|
+| 1 | `sap-landscape-discovery` | SAP system inventory, VM power state, topology | No |
+| 2 | `sap-operational-health` | 5-layer health dashboard (infra/OS/cluster/HANA/app) | Optional |
+| 3 | `sap-config-validator` | STAF-aligned config checks from Azure/sap-automation-qa | Optional |
+| 4 | `sap-ha-cluster-health` | Pacemaker/HSR status, takeover readiness | Optional |
+| 5 | `sap-incident-analysis` | Cross-layer root cause analysis | No |
+| 6 | `sap-resiliency-assessment` | Azure Advisor + ACSS reliability checks | No |
+| 7 | `sap-performance-diagnostics` | HANA memory, disk IOPS, savepoint diagnostics | Optional |
+| 8 | `sap-deployment-readiness` | SKU availability, quota, SAP certification | No |
+| 9 | `sap-cost-analysis` | Per-system cost breakdown, RI coverage, savings | No |
+| 10 | `sap-trend-analysis` | Memory/disk/CPU trend projection via AMS | No |
+| 11 | `sap-self-healing` | Log volume full, backup staleness, sysctl drift | Yes |
+| 12 | `sap-maintenance-handler` | Azure scheduled maintenance graceful handling | Yes |
+| — | `sap-command-runner` | 14 read-only commands on SAP VMs | Yes |
+
 ## Prerequisites
 
 - **Azure CLI** (`az`) — [install](https://aka.ms/installazurecli)
-- Existing SAP workloads on Azure VMs (HANA + NetWeaver running)
+- SAP workloads running on Azure VMs (HANA + NetWeaver)
 - Azure Monitor for SAP Solutions (AMS) with HANA provider configured
 - Azure SRE Agent created at [sre.azure.com](https://sre.azure.com)
 
-## Setup (4 Steps)
+## Quick Start (Day 1 — No Proxy)
 
-### 1. Deploy Infrastructure
+### 1. Import Skills
+
+1. SRE Agent portal → **Plugins** → **Manage marketplaces** → **Add**
+2. Enter: `mcaps-microsoft/sap-azure-sre-agent` → **Resolve** → **Add**
+3. Click plugin → **Install** (imports all 13 skills)
+
+### 2. Configure SRE Agent
+
+- **Managed Resources:** Add SAP resource groups + AMS resource group
+- **Connectors:** Add Log Analytics Workspace (AMS workspace ID)
+- **Knowledge Sources:** Upload `config/sap-landscape-inventory.template.json` (filled with your SAP systems)
+- **Team Onboarding:** Paste filled-in `onboarding/team-onboarding.template.md`
+
+**Done.** 10 skills are now operational — try "Run resiliency assessment" or "Show SAP landscape".
+
+## Full Setup (Day 2 — With Proxy)
+
+Deploy the command proxy to unlock live VM queries, config validation, and the remaining skills.
+
+### 3. Deploy Infrastructure
 
 The deploy script creates all Azure resources and deploys the container app in one step (~5 min):
 
@@ -49,22 +88,11 @@ az role assignment create --assignee-object-id <UMI-PRINCIPAL-ID> --assignee-pri
 az storage account network-rule add --account-name <storage-account> --subnet "<sap-vm-subnet-resource-id>"
 ```
 
-### 2. Import Skills
+### 4. Import updated Team Onboarding
 
-1. SRE Agent portal → **Plugins** → **Manage marketplaces** → **Add**
-2. Enter: `mcaps-microsoft/sap-azure-sre-agent` → **Resolve** → **Add**
-3. Click plugin → **Install** (imports all 15 skills)
+Update the Team Onboarding with proxy URL and API key from the deploy script output.
 
-> **Note:** Repo must be accessible to the agent. Set filter to "All" (not "Supported") to see skills-only plugins.
-
-### 3. Configure SRE Agent
-
-- **Managed Resources:** Add SAP resource groups + AMS resource group
-- **Connectors:** Add Log Analytics Workspace (AMS workspace)
-- **Knowledge Sources:** Upload `config/sap-landscape-inventory.template.json` (filled in with your SAP systems)
-- **Team Onboarding:** Paste filled-in `onboarding/team-onboarding.template.md` with proxy URLs, API key, subscription ID
-
-### 4. Deploy Collector to SAP VMs
+### 5. Deploy Collector to SAP VMs
 
 The collector script gathers SAP/HANA/OS configs from each VM and uploads to blob storage weekly.
 

@@ -1,18 +1,14 @@
 ---
-name: sap-ha-dr-guardian
-description: "Unified HA and DR health for SAP. Evaluates Pacemaker cluster state, HSR replication status, takeover readiness, and failover forensics. In T1 mode: show status. In T3 mode: on SFAIL/quorum loss, alert and recommend remediation with approval gate."
+name: sap-ha-cluster-health
+description: "Evaluates Pacemaker cluster state, HSR replication status, and takeover readiness for SAP HA systems. Uses AMS telemetry and optional live VM commands (crm_mon, SAPHanaSR-showAttr, hsr_state) via command proxy. Read-only."
 tools:
     - ExecutePythonCode
-    - GetCurrentUtcTime
-    - SearchMemory
-    - SearchIncidentKnowledge
-    - MCP-MSLearnDocs_microsoft_docs_search
-    - MCP-MSLearnDocs_microsoft_docs_fetch
+    - RunAzCliReadCommands
+    - GetArmResourceAsJson
     - GetActivityLogsSummary
     - QueryLogAnalyticsByWorkspaceId
     - GetMetricTimeSeriesElementsForAzureResource
-    - GetDimensionNames
-    - ListAvailableMetrics
+    - PlotAreaChartWithCorrelation
     - CheckTcpConnectivity
     - GetArmResourceAsJson
     - RunAzCliReadCommands
@@ -51,16 +47,17 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 ## Data Sources
 
-| Source | Freshness | Used For |
-|--------|-----------|----------|
-| AMS: `Prometheus_HaClusterExporter_CL` | 2-5 min | Live node/resource status, fail-counts |
-| AMS: `SapHana_SystemReplication_CL` | 2-5 min | HSR sync state, mode, lag |
-| Blob: `crm-status.txt` | Cron (4-6h) | Full Pacemaker config (crm_mon output) |
-| Blob: `saphanasr-showattr.txt` | Cron (4-6h) | SOK/SFAIL, operation mode, site attributes |
-| Blob: `global.ini` | Cron (4-6h) | SR hook provider registration |
-| Azure Monitor: VM Availability | Real-time | Platform events |
-| Activity Log | Real-time | Fencing = VM deallocate events |
-| Resource Health | Real-time | Planned/unplanned events |
+| Source | Primary/Fallback | Freshness | Used For |
+|--------|-----------------|-----------|----------|
+| **Command proxy `/batch`** | **PRIMARY** | **Live** | **crm_mon output, SAPHanaSR-showAttr, global.ini HA hooks, cluster properties** |
+| AMS: `Prometheus_HaClusterExporter_CL` | Primary | 2-5 min | Live node/resource status, fail-counts |
+| AMS: `SapHana_SystemReplication_CL` | Primary | 2-5 min | HSR sync state, mode, lag |
+| Blob: `crm-status.txt` | Fallback | Cron (4-6h) | Full Pacemaker config — **only if command proxy fails** |
+| Blob: `saphanasr-showattr.txt` | Fallback | Cron (4-6h) | SOK/SFAIL — **only if command proxy fails** |
+| Blob: `global.ini` | Fallback | Cron (4-6h) | SR hook registration — **only if command proxy fails** |
+| Azure Monitor: VM Availability | Primary | Real-time | Platform events |
+| Activity Log | Primary | Real-time | Fencing = VM deallocate events |
+| Resource Health | Primary | Real-time | Planned/unplanned events |
 
 ## Authentication
 
@@ -73,6 +70,9 @@ from datetime import datetime, timedelta, timezone
 
 # PROXY_URL: Use config_proxy_url from Team Onboarding
 # PROXY_KEY: Use config_proxy_api_key from Team Onboarding
+
+# COMMAND_PROXY_URL: Use command_proxy_url from Team Onboarding
+# COMMAND_PROXY_KEY: Use command_proxy_api_key from Team Onboarding
 
 # VM commands are executed via the SAP Command Executor skill (never directly)
 # When T3 mode needs to remediate, instruct the agent to invoke SAP Command Executor
@@ -103,9 +103,37 @@ def query_log_analytics(query, timespan_hours=6):
     resp.raise_for_status()
     return resp.json()
 
-def get_vm_configs(sid, hostname):
+def get_ha_data_live(vm_name, rg):
+    """Fetch HA/DR data from VM via command proxy batch (live, primary source)."""
+    commands = [
+        {"id": "crm_status", "cmd": "crm_mon -1 --output-as=text 2>/dev/null || crm status"},
+        {"id": "saphanasr_showattr", "cmd": "SAPHanaSR-showAttr 2>/dev/null || echo 'N/A'"},
+        {"id": "global_ini_hooks", "cmd": "grep -A5 '\\[ha_dr_provider' /hana/shared/*/global/hdb/custom/config/global.ini 2>/dev/null || echo 'N/A'"},
+        {"id": "hsr_state", "cmd": "su - $(ls /hana/shared/ | head -1 | tr '[:upper:]' '[:lower:]')adm -c 'python /usr/sap/*/HDB*/exe/python_support/systemReplicationStatus.py' 2>/dev/null || echo 'N/A'"},
+        {"id": "crm_config", "cmd": "cibadmin --query --scope crm_config 2>/dev/null | grep -E 'stonith-enabled|stonith-action|stonith-timeout|concurrent-fencing' || echo 'N/A'"},
+    ]
+    resp = requests.post(f"{COMMAND_PROXY_URL}/batch",
+        headers={"x-api-key": COMMAND_PROXY_KEY, "Content-Type": "application/json"},
+        json={"vm": vm_name, "rg": rg, "commands": commands}, timeout=180)
+    if resp.status_code == 200:
+        results = {r["id"]: r["output"] for r in resp.json().get("results", [])}
+        return {"source": "live", "data": results, "timestamp": datetime.now(timezone.utc).isoformat()}
+    return None
+
+def get_ha_data_blob(sid, hostname):
+    """Fallback: fetch HA/DR data from blob config files (stale, 4-6h old)."""
     resp = requests.get(f"{PROXY_URL}/configs/{sid}/{hostname}", headers={"x-api-key": PROXY_KEY}, timeout=60)
-    return resp.json().get("files", {}) if resp.status_code == 200 else {}
+    if resp.status_code == 200:
+        data = resp.json()
+        return {"source": "blob", "data": data.get("files", {}), "timestamp": data.get("last_modified", "unknown")}
+    return {"source": "none", "data": {}, "timestamp": None}
+
+def get_ha_data(vm_name, rg, sid, hostname):
+    """Try live command proxy first, fall back to blob."""
+    live = get_ha_data_live(vm_name, rg)
+    if live:
+        return live
+    return get_ha_data_blob(sid, hostname)
 ```
 
 ## T1 Mode: Cluster + HSR Status
@@ -119,18 +147,22 @@ Prometheus_HaClusterExporter_CL
 ```
 
 ### HSR Checks (10 total)
-| ID | Check | Source |
-|----|-------|--------|
-| HSR-001 | HSR sync state (ACTIVE/ERROR) | AMS `SapHana_SystemReplication_CL` |
-| HSR-002 | Replication mode (sync/syncmem/async) | AMS |
-| HSR-003 | SAPHanaSR-showAttr sync_state (SOK/SFAIL) | Blob `saphanasr-showattr.txt` |
-| HSR-004 | Operation mode (logreplay/delta_datashipping) | Blob |
-| HSR-005 | SR hook provider in global.ini | Blob `global.ini` |
-| HSR-006 | AUTOMATED_REGISTER = true | Blob `crm-status.txt` |
-| HSR-007 | PREFER_SITE_TAKEOVER = true | Blob `crm-status.txt` |
-| HSR-008 | Pacemaker SAPHana resource state | AMS |
-| HSR-009 | VM availability (both nodes) | Azure Monitor |
-| HSR-010 | Data freshness (last AMS record) | AMS |
+| ID | Check | Primary Source | Fallback |
+|----|-------|---------------|----------|
+| HSR-001 | HSR sync state (ACTIVE/ERROR) | AMS `SapHana_SystemReplication_CL` | — |
+| HSR-002 | Replication mode (sync/syncmem/async) | AMS | — |
+| HSR-003 | SAPHanaSR-showAttr sync_state (SOK/SFAIL) | **Command proxy: `saphanasr_showattr`** | Blob `saphanasr-showattr.txt` |
+| HSR-004 | Operation mode (logreplay/delta_datashipping) | **Command proxy: `saphanasr_showattr`** | Blob |
+| HSR-005 | SR hook provider in global.ini | **Command proxy: `global_ini_hooks`** | Blob `global.ini` |
+| HSR-006 | AUTOMATED_REGISTER = true | **Command proxy: `crm_status`** | Blob `crm-status.txt` |
+| HSR-007 | PREFER_SITE_TAKEOVER = true | **Command proxy: `crm_status`** | Blob `crm-status.txt` |
+| HSR-008 | Pacemaker SAPHana resource state | AMS | — |
+| HSR-009 | VM availability (both nodes) | Azure Monitor | — |
+| HSR-010 | Data freshness (last AMS record) | AMS | — |
+
+**Data source tagging**: Always include in output which source was used:
+- `Source: ✅ Live` — command proxy batch succeeded
+- `Source: ⚠️ Blob (stale, <timestamp>)` — fallback to cron-collected data
 
 ## T1 Forensic Mode: Failure Timeline
 

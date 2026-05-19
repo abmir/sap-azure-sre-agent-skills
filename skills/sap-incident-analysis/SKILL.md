@@ -1,18 +1,17 @@
 ---
-name: sap-incident-rca
-description: "Cross-layer root cause analysis for SAP incidents. Correlates Azure infrastructure, Guest OS, Pacemaker cluster, HANA database, and SAP application evidence to explain why a system is down, slow, or unstable. Conditional ServiceNow and Grafana enrichment when configured."
+name: sap-incident-analysis
+description: "Cross-layer root cause analysis for SAP incidents. Correlates Azure infrastructure events, Guest OS, Pacemaker cluster, HANA database, and SAP application evidence to explain why a system is down, slow, or unstable. No proxy required — uses Azure-native APIs only."
 tools:
     - ExecutePythonCode
-    - GetCurrentUtcTime
-    - SearchMemory
-    - SearchIncidentKnowledge
-    - MCP-MSLearnDocs_microsoft_docs_search
-    - MCP-MSLearnDocs_microsoft_docs_fetch
+    - RunAzCliReadCommands
+    - GetArmResourceAsJson
     - GetActivityLogsSummary
     - GetChangeHistory
-    - ShowChangeDiffViewer
-    - AnalyzeDeploymentFailures
     - QueryLogAnalyticsByWorkspaceId
+    - GetMetricTimeSeriesElementsForAzureResource
+    - PlotAreaChartWithCorrelation
+    - PlotBarChart
+    - CreateScheduledMonitoringTask
     - GetMetricTimeSeriesElementsForAzureResource
     - GetArmResourceAsJson
     - RunAzCliReadCommands

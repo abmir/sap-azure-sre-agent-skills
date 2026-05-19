@@ -1,25 +1,12 @@
 ---
 name: sap-operational-health
-description: "Unified health dashboard for SAP systems. Checks AMS provider health, data freshness, VM power state, CPU/memory/disk metrics, accelerated networking, proximity placement, Resource Health, and alert coverage. Traffic-light output per layer."
+description: "Unified health dashboard for SAP systems. Checks AMS provider health, data freshness, VM power state, CPU/memory/disk metrics, accelerated networking, proximity placement, Resource Health, and alert coverage. Traffic-light output per layer. Enriched with live VM data when command proxy is available."
 tools:
     - ExecutePythonCode
-    - GetCurrentUtcTime
-    - SearchMemory
-    - SearchIncidentKnowledge
-    - MCP-MSLearnDocs_microsoft_docs_search
-    - MCP-MSLearnDocs_microsoft_docs_fetch
-    - QueryLogAnalyticsByWorkspaceId
-    - QueryLogAnalyticsByResourceId
-    - ListAvailableMetrics
-    - GetMetricTimeSeriesElementsForAzureResource
-    - GetDimensionNames
-    - ValidateQuery
-    - CheckTcpConnectivity
-    - CheckIfResourceExists
     - RunAzCliReadCommands
     - GetArmResourceAsJson
-    - GetTlsSettings
-    - PlotAreaChartWithCorrelation
+    - QueryLogAnalyticsByWorkspaceId
+    - GetMetricTimeSeriesElementsForAzureResource
     - PlotBarChart
     - PlotHeatmap
 ---
@@ -44,14 +31,15 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 ## Data Sources
 
-| Source | Freshness | What It Provides |
-|--------|-----------|-----------------|
-| Azure Monitor Metrics | Real-time (1 min) | VM CPU, memory, disk IOPS/latency, network |
-| Azure Resource Health | Real-time | Platform events (planned/unplanned maintenance) |
-| Azure VM Power State | Real-time | Running/stopped/deallocated |
-| AMS Log Analytics | 2-5 min | HANA availability, OS metrics, Pacemaker state, SAP processes |
-| Activity Log | Real-time | Recent changes |
-| Config Proxy | Cron (4-6h) | ethtool output, VM configs |
+| Source | Primary/Fallback | Freshness | What It Provides |
+|--------|-----------------|-----------|-----------------|
+| Azure Monitor Metrics | Primary | Real-time (1 min) | VM CPU, memory, disk IOPS/latency, network |
+| Azure Resource Health | Primary | Real-time | Platform events (planned/unplanned maintenance) |
+| Azure VM Power State | Primary | Real-time | Running/stopped/deallocated |
+| AMS Log Analytics | Primary | 2-5 min | HANA availability, OS metrics, Pacemaker state, SAP processes |
+| Activity Log | Primary | Real-time | Recent changes |
+| **Command proxy `/batch`** | **Primary** | **Live** | **ethtool output, PPG validation, accelerated networking, VM configs** |
+| Config Proxy (blob) | Fallback | Cron (4-6h) | ethtool output, VM configs — **only if command proxy fails** |
 
 ## Authentication
 
@@ -64,6 +52,9 @@ from datetime import datetime, timedelta, timezone
 
 # PROXY_URL: Use config_proxy_url from Team Onboarding
 # PROXY_KEY: Use config_proxy_api_key from Team Onboarding
+
+# COMMAND_PROXY_URL: Use command_proxy_url from Team Onboarding
+# COMMAND_PROXY_KEY: Use command_proxy_api_key from Team Onboarding
 
 def get_mi_token(resource):
     resp = requests.get("http://169.254.169.254/metadata/identity/oauth2/token",
@@ -108,9 +99,41 @@ def get_landscape_registry():
     resp = requests.get(f"{PROXY_URL}/registry", headers={"x-api-key": PROXY_KEY}, timeout=30)
     return resp.json() if resp.status_code == 200 else None
 
-def get_vm_configs(sid, hostname):
+def get_vm_data_live(vm_name, rg, commands):
+    """Fetch VM data via command proxy batch (live, primary source)."""
+    resp = requests.post(f"{COMMAND_PROXY_URL}/batch",
+        headers={"x-api-key": COMMAND_PROXY_KEY, "Content-Type": "application/json"},
+        json={"vm": vm_name, "rg": rg, "commands": commands}, timeout=180)
+    if resp.status_code == 200:
+        results = {r["id"]: r["output"] for r in resp.json().get("results", [])}
+        return {"source": "live", "data": results, "timestamp": datetime.now(timezone.utc).isoformat()}
+    return None
+
+def get_vm_configs_fallback(sid, hostname):
+    """Fallback: fetch VM config data from blob (stale, 4-6h old)."""
     resp = requests.get(f"{PROXY_URL}/configs/{sid}/{hostname}", headers={"x-api-key": PROXY_KEY}, timeout=60)
-    return resp.json().get("files", {}) if resp.status_code == 200 else {}
+    if resp.status_code == 200:
+        data = resp.json()
+        return {"source": "blob", "data": data.get("files", {}), "timestamp": data.get("last_modified", "unknown")}
+    return {"source": "none", "data": {}, "timestamp": None}
+
+def get_vm_data(vm_name, rg, sid, hostname, commands):
+    """Try live command proxy first, fall back to blob."""
+    live = get_vm_data_live(vm_name, rg, commands)
+    if live:
+        return live
+    return get_vm_configs_fallback(sid, hostname)
+```
+
+**Standard commands for health checks**:
+```python
+HEALTH_COMMANDS = [
+    {"id": "ethtool", "cmd": "ethtool -i eth0 2>/dev/null | grep driver"},
+    {"id": "accel_net", "cmd": "ethtool -i eth0 2>/dev/null | grep -q 'driver: mlx' && echo 'enabled' || echo 'disabled'"},
+    {"id": "uptime", "cmd": "uptime"},
+    {"id": "free_mem", "cmd": "free -m | grep Mem"},
+    {"id": "df_usage", "cmd": "df -h /hana/data /hana/log /hana/shared 2>/dev/null || df -h /"},
+]
 ```
 
 ## Health Dashboard — 5 Layers

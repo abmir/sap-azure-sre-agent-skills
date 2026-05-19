@@ -1,16 +1,10 @@
 ---
-name: sap-cost-insights
-description: "Analyzes Azure costs for SAP systems and SRE agent infrastructure. Per-system cost breakdown, RI coverage, deallocated VM savings, and agent operating cost."
+name: sap-cost-analysis
+description: "Analyzes Azure costs for SAP systems. Per-system cost breakdown, RI coverage, deallocated VM savings, rightsizing opportunities, and SRE agent operating cost. No proxy required — uses Azure Cost Management APIs."
 tools:
     - ExecutePythonCode
-    - GetCurrentUtcTime
-    - SearchMemory
-    - SearchIncidentKnowledge
-    - MCP-MSLearnDocs_microsoft_docs_search
-    - MCP-MSLearnDocs_microsoft_docs_fetch
     - RunAzCliReadCommands
     - GetArmResourceAsJson
-    - GetMetricTimeSeriesElementsForAzureResource
     - PlotPieChart
     - PlotBarChart
     - PlotAreaChartWithCorrelation

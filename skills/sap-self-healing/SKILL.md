@@ -1,20 +1,14 @@
 ---
 name: sap-self-healing
-description: "Handles time-critical SAP scenarios autonomously within strict guardrails. Manages log volume full, backup staleness, and sysctl drift after unplanned reboots. Fixed allowlist of actions — no arbitrary commands."
+description: "Handles time-critical SAP scenarios within strict guardrails. Detects log volume full, backup staleness, and sysctl drift after unplanned reboots. Requires command proxy for remediation actions."
 tools:
     - ExecutePythonCode
-    - GetCurrentUtcTime
-    - SearchMemory
-    - SearchIncidentKnowledge
-    - MCP-MSLearnDocs_microsoft_docs_search
-    - MCP-MSLearnDocs_microsoft_docs_fetch
+    - RunAzCliReadCommands
+    - GetArmResourceAsJson
     - QueryLogAnalyticsByWorkspaceId
     - GetMetricTimeSeriesElementsForAzureResource
-    - GetArmResourceAsJson
-    - RunAzCliReadCommands
     - GetActivityLogsSummary
     - CreateScheduledMonitoringTask
-    - PlotAreaChartWithCorrelation
 ---
 
 ## Environment Configuration

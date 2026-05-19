@@ -1,18 +1,15 @@
 ---
-name: sap-anomaly-forecaster
-description: "Trend analysis on HANA memory, disk utilization, CPU, and replication lag. Projects resource exhaustion via linear regression. When threshold crossed: sends approval card with recommended action. On approval: executes remediation via SAP Command Executor skill."
+name: sap-trend-analysis
+description: "Analyzes trends in HANA memory, disk utilization, CPU, and replication lag using AMS telemetry. Projects resource exhaustion timelines via linear regression. No proxy required — uses AMS and Azure Monitor data."
 tools:
     - ExecutePythonCode
-    - GetCurrentUtcTime
-    - SearchMemory
-    - SearchIncidentKnowledge
-    - MCP-MSLearnDocs_microsoft_docs_search
-    - MCP-MSLearnDocs_microsoft_docs_fetch
+    - RunAzCliReadCommands
     - QueryLogAnalyticsByWorkspaceId
-    - QueryLogAnalyticsByResourceId
     - GetMetricTimeSeriesElementsForAzureResource
-    - ListAvailableMetrics
-    - GetDimensionNames
+    - CreateScheduledMonitoringTask
+    - PlotAreaChartWithCorrelation
+    - PlotScatter
+    - PlotBarChart
     - RunAzCliReadCommands
     - GetArmResourceAsJson
     - CreateScheduledMonitoringTask
@@ -59,6 +56,9 @@ from datetime import datetime, timedelta, timezone
 # PROXY_URL: Use config_proxy_url from Team Onboarding
 # PROXY_KEY: Use config_proxy_api_key from Team Onboarding
 
+# COMMAND_PROXY_URL: Use command_proxy_url from Team Onboarding
+# COMMAND_PROXY_KEY: Use command_proxy_api_key from Team Onboarding
+
 # VM commands are executed via the SAP Command Executor skill (never directly)
 # When T3 mode needs to act on a recommendation, invoke SAP Command Executor
 
@@ -84,14 +84,14 @@ def query_log_analytics(query, timespan_hours=168):
 
 ## Forecasting Metrics
 
-| Metric | Source | Query Window | Alert Threshold |
-|--------|--------|-------------|-----------------|
-| HANA memory utilization | `SapHana_LoadHistory_CL` | 7 days | Projected OOM within 72h |
-| /hana/log utilization | Azure Monitor disk % or proxy `df` | 7 days | Projected full within 48h |
-| /hana/data utilization | Azure Monitor disk % | 7 days | Projected full within 72h |
-| Host CPU trend | `SapHana_LoadHistory_CL` | 7 days | Sustained >90% for 4h+ |
-| HSR replication lag | `SapHana_SystemReplication_CL` | 24h | Increasing trend (lag growing) |
-| MVCC version count | `SapHana_Mvcc_CL` | 24h | Monotonically increasing |
+| Metric | Primary Source | Fallback Source | Query Window | Alert Threshold |
+|--------|---------------|-----------------|-------------|-----------------|
+| HANA memory utilization | `SapHana_LoadHistory_CL` | — | 7 days | Projected OOM within 72h |
+| /hana/log utilization | **Command proxy batch: `df -h`** | Azure Monitor disk % or blob `df` | 7 days | Projected full within 48h |
+| /hana/data utilization | Azure Monitor disk % | — | 7 days | Projected full within 72h |
+| Host CPU trend | `SapHana_LoadHistory_CL` | — | 7 days | Sustained >90% for 4h+ |
+| HSR replication lag | `SapHana_SystemReplication_CL` | — | 24h | Increasing trend (lag growing) |
+| MVCC version count | `SapHana_Mvcc_CL` | — | 24h | Monotonically increasing |
 
 ## Trend Analysis — Linear Regression
 

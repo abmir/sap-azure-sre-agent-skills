@@ -1,31 +1,23 @@
 ---
 name: sap-resiliency-assessment
-description: "Evaluates SAP workload resiliency: availability zone coverage, HA architecture, load balancer redundancy, single points of failure, disk zone alignment, and zone migration readiness."
+description: "Resiliency assessment for SAP workloads on Azure. Uses Azure Advisor HighAvailability recommendations (including ACSS/SAP checks for Pacemaker, STONITH, corosync, LB config) as primary data source, supplemented by ARG queries for resource locks, accelerated networking, and diagnostic settings. No proxy required."
 tools:
     - ExecutePythonCode
-    - GetCurrentUtcTime
-    - SearchMemory
-    - SearchIncidentKnowledge
-    - MCP-MSLearnDocs_microsoft_docs_search
-    - MCP-MSLearnDocs_microsoft_docs_fetch
-    - GetArmResourceAsJson
     - RunAzCliReadCommands
+    - GetArmResourceAsJson
     - CheckIfResourceExists
-    - CheckTcpConnectivity
-    - GetTlsSettings
     - PlotBarChart
-    - PlotHeatmap
 ---
 
 ## Environment Configuration
 
 All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, API keys, SAP landscape) are provided via the Team Onboarding instructions. The agent reads these from the onboarding context at runtime. Do not hardcode environment values in this skill.
 
-**Authentication**: Use the agent's built-in tools (RunAzCliReadCommands, GetArmResourceAsJson, QueryLogAnalyticsByWorkspaceId, GetMetricTimeSeriesElementsForAzureResource) for Azure API calls. These authenticate automatically via the agent's Managed Identity.
+**Authentication**: Use the agent's built-in tools (RunAzCliReadCommands, GetArmResourceAsJson) for Azure API calls. These authenticate automatically via the agent's Managed Identity.
 
-**Data Reuse (AAU Optimization)**: Before calling any API or proxy, check if the data was already retrieved earlier in this conversation. Reuse landscape registry, VM power states, config files, and AMS query results from context. Do not re-fetch data that is already available.
+**Data Reuse (AAU Optimization)**: Before calling any API or proxy, check if the data was already retrieved earlier in this conversation. Reuse Advisor recommendations, landscape registry, VM properties, and ARG results from context.
 
-**Proxy Fallback**: If the config proxy or command proxy returns an error (timeout, 5xx, unreachable), inform the user and continue with Azure-native data sources only (AMS, ARM API, Azure Monitor). Do not block the entire skill on a proxy failure.
+**Proxy Fallback**: If the config proxy or command proxy returns an error (timeout, 5xx, unreachable), inform the user and continue with Advisor + Azure-native data sources only. Do not block the entire skill on a proxy failure.
 
 ## When to Use
 
@@ -34,67 +26,142 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 - "Are our SAP VMs in availability zones?"
 - "Single points of failure?"
 - "Zone coverage analysis"
+- "Pacemaker health check"
+- "DR readiness check"
 
-## Authentication
+## How It Works
 
-```python
-import requests, json
+The skill combines three data sources:
 
-# SUB_ID: Use subscription_id from Team Onboarding
+1. **Azure Advisor HighAvailability recommendations** (primary) — Advisor automatically evaluates all resources in the SAP resource groups. For SAP VIS (Virtual Instance for SAP) resources registered via ACSS, Advisor receives ~30 SAP-specific checks from the ACSS agent extension running on the VMs. These cover Pacemaker config, STONITH, corosync, load balancer HA ports, fencing agents, zone placement, and more. For non-SAP resources (storage, NICs, LBs), Advisor applies standard reliability checks.
 
-# PROXY_URL: Use config_proxy_url from Team Onboarding
-# PROXY_KEY: Use config_proxy_api_key from Team Onboarding
+2. **ARG gap-fill queries** (3 supplemental checks) — Resource locks, accelerated networking, and diagnostic settings are not covered by Advisor.
 
-def get_mi_token(resource):
-    resp = requests.get("http://169.254.169.254/metadata/identity/oauth2/token",
-        params={"api-version": "2019-08-01", "resource": resource},
-        headers={"Metadata": "true"}, timeout=10)
-    resp.raise_for_status()
-    return resp.json()["access_token"]
+3. **Landscape registry** (optional context) — If the config proxy is available, cross-reference Advisor findings with SAP system roles (DB, ASCS, PAS, ERS) for richer reporting.
 
-def arm_get(path, api_version="2023-09-01"):
-    token = get_mi_token("https://management.azure.com/")
-    url = f"https://management.azure.com{path}?api-version={api_version}"
-    resp = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=60)
-    resp.raise_for_status()
-    return resp.json()
+## Execution Steps
 
-def get_landscape_registry():
-    resp = requests.get(f"{PROXY_URL}/registry", headers={"x-api-key": PROXY_KEY}, timeout=30)
-    return resp.json() if resp.status_code == 200 else None
-```
+### Step 1: Get Advisor Reliability Recommendations
 
-## Resiliency Checks (12 total)
-
-| ID | Check | Source | PASS | FAIL |
-|----|-------|--------|------|------|
-| RES-01 | VMs deployed in availability zones | ARM VM `zones` property | All VMs zoned | Any VM without zone |
-| RES-02 | Zone distribution (not all in same zone) | ARM VM | Spread across >=2 zones | All in 1 zone |
-| RES-03 | HA pairs in different zones | ARM VM | DB primary/secondary in different zones | Same zone |
-| RES-04 | Load Balancer zone redundancy | ARM LB `sku.name` + frontend zones | Zone-redundant Standard LB | Basic LB or single-zone |
-| RES-05 | LB health probe configured | ARM LB probes | Probe exists with correct port | Missing or wrong port |
-| RES-06 | LB HA ports enabled | ARM LB rules | HA ports rule | Individual port rules |
-| RES-07 | Managed disks in same zone as VM | ARM Disk `zones` | Disk zone matches VM zone | Mismatch |
-| RES-08 | No single point of failure (ASCS/ERS) | ARM VM | ASCS and ERS on separate VMs | Same VM |
-| RES-09 | PPG for latency-sensitive VMs | ARM PPG | DB + App in same PPG | No PPG |
-| RES-10 | Backup enabled on all VMs | ARM Recovery Services | All VMs protected | Unprotected VMs |
-| RES-11 | DR strategy exists (HSR/backint/ASR) | AMS + ARM | HSR active or ASR configured | No DR |
-| RES-12 | Resource locks on production VMs | ARM locks | CanNotDelete lock | No lock |
-
-## Output Format
+Query for all SAP resource groups. Multiple RGs can be checked in one call:
 
 ```
-AB1 — Resiliency Score: 8/12 (67%)
-
-  ✅ RES-01: All VMs in availability zones (Zone 1)
-  ❌ RES-02: All VMs in SAME zone (Zone 1) — no zone redundancy
-  ⚪ RES-03: N/A (no HA pair)
-  ✅ RES-04: Standard LB, zone-redundant
-  ...
-
-  TOP GAPS:
-  1. Single-zone deployment — zone failure = full outage
-  2. No DR strategy configured
-  
-  RECOMMENDATION: Migrate to multi-zone with zone-redundant LB
+RunAzCliReadCommands: az advisor recommendation list --category HighAvailability --query "[?contains(resourceGroup,'SAP') || contains(resourceGroup,'sap')].{resource:impactedValue, resourceGroup:resourceGroup, impact:impact, problem:shortDescription.problem, solution:shortDescription.solution, resourceType:impactedField}" -o json
 ```
+
+For a specific SAP system (e.g., AB1):
+```
+RunAzCliReadCommands: az advisor recommendation list --category HighAvailability --query "[?resourceGroup=='RG_SAP_AB1' || resourceGroup=='mrg-AB1-48f3f2'].{resource:impactedValue, impact:impact, problem:shortDescription.problem, solution:shortDescription.solution}" -o json
+```
+
+### Step 2: Get Resource Inventory
+
+```
+RunAzCliReadCommands: az graph query -q "Resources | where resourceGroup =~ '<RG_NAME>' | project name, type, location, zones, sku" --query "data" -o json
+```
+
+### Step 3: Run Supplemental Checks
+
+These three checks are NOT covered by Advisor and must be queried separately.
+
+**SUP-01: Resource Locks**
+```
+RunAzCliReadCommands: az lock list --resource-group <RG_NAME> --query "[].{name:name, level:level}" -o json
+```
+- PASS: CanNotDelete lock on SAP resource group
+- FAIL: No locks — accidental deletion risk for production SAP VMs
+
+**SUP-02: Accelerated Networking**
+```
+RunAzCliReadCommands: az graph query -q "Resources | where resourceGroup =~ '<RG_NAME>' and type == 'microsoft.network/networkinterfaces' | extend accelNet = properties.enableAcceleratedNetworking | project name, accelNet" --query "data" -o json
+```
+- PASS: All NICs have acceleratedNetworking enabled (required for SAP production per SAP Note 2015553)
+- FAIL: Any NIC without accelerated networking
+
+**SUP-03: Diagnostic Settings**
+```
+RunAzCliReadCommands: az monitor diagnostic-settings list --resource <VM_RESOURCE_ID> --query "[].{name:name, workspace:workspaceId}" -o json
+```
+- PASS: VMs have diagnostic settings forwarding to Log Analytics
+- FAIL: No diagnostic settings on production VMs
+
+### Step 4: Output
+
+Group findings by **impact level** (High → Medium → Low), then by SAP system.
+
+```
+<SAP_SID> (<RG_NAME>) — Resiliency Assessment
+
+══════════════════════════════════════════
+ADVISOR FINDINGS: <N> recommendations
+══════════════════════════════════════════
+
+🔴 HIGH IMPACT (<count>)
+  • <vm/resource> — <problem>
+    Fix: <solution>
+  • <vm/resource> — <problem>
+    Fix: <solution>
+
+🟡 MEDIUM IMPACT (<count>)
+  • <vm/resource> — <problem>
+    Fix: <solution>
+
+══════════════════════════════════════════
+SUPPLEMENTAL CHECKS
+══════════════════════════════════════════
+
+  ❌ SUP-01: No CanNotDelete locks on RG_SAP_AB1
+  ✅ SUP-02: All 6 NICs have accelerated networking
+  ❌ SUP-03: 2 VMs missing diagnostic settings
+
+══════════════════════════════════════════
+COMPLIANT RESOURCES (no Advisor findings)
+══════════════════════════════════════════
+
+  ✅ ab1vm (<VM>) — no reliability recommendations
+  ✅ ab1-lb (<LB>) — no reliability recommendations
+
+══════════════════════════════════════════
+SUMMARY
+══════════════════════════════════════════
+
+  Advisor findings:  <N> total (<H> high, <M> medium, <L> low)
+  Supplemental:      <P>/3 pass
+  Resources in scope: <total>
+  Compliant:          <compliant> (<pct>%)
+```
+
+### Step 5: Multi-System Summary
+
+When assessing multiple SAP systems, produce a heatmap:
+
+```
+PlotHeatmap with data:
+         | Advisor High | Advisor Med | Locks | AccelNet | DiagSettings |
+  AB1    |     0        |     2       |  ❌   |    ✅    |     ❌       |
+  AB2    |     1        |     3       |  ❌   |    ✅    |     ✅       |
+  AB3    |     0        |     1       |  ❌   |    ✅    |     ✅       |
+  AB5    |     3        |     4       |  ❌   |    ✅    |     ❌       |
+```
+
+## What Advisor Covers for SAP (no custom logic needed)
+
+Advisor + ACSS automatically evaluates these for SAP VIS resources:
+
+| Category | Checks |
+|---|---|
+| **Pacemaker HA** | STONITH enabled, stonith-timeout (144 or 900), concurrent-fencing, fence_azure_arm instance count, softdog module loaded |
+| **Corosync** | Token set to 30000, consensus to 36000 (SUSE), expected_votes = 2, two_node = 1 |
+| **Load Balancer** | Idle timeout = 30 min, floating IP enabled, HA ports enabled, TCP timestamps disabled |
+| **Zone Placement** | HA across zones for DB, ASCS, App Server; zone-redundant LB |
+| **Disk/Storage** | Premium or Ultra disk for production, disk-VM zone alignment |
+| **Backup/DR** | VM backup enabled, HSR configured, ASR replication |
+| **App Server** | HA configuration, 2+ instances for production |
+
+For non-SAP resources in SAP RGs (storage accounts, NICs, NSGs), Advisor applies standard reliability checks (zone redundancy, soft delete, TLS, etc.).
+
+## References
+- [Azure Advisor Reliability Recommendations — Workloads (SAP)](https://learn.microsoft.com/en-us/azure/advisor/advisor-reference-reliability-recommendations#workloads)
+- [Resiliency in Azure (Business Continuity Center)](https://learn.microsoft.com/en-us/azure/resiliency/resiliency-overview)
+- [SAP on Azure HA Architecture](https://learn.microsoft.com/en-us/azure/sap/workloads/sap-high-availability-architecture-scenarios)
+- [Azure Well-Architected Framework — Reliability](https://learn.microsoft.com/en-us/azure/well-architected/reliability/)
