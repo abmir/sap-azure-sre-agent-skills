@@ -88,9 +88,10 @@ foreach ($rg in @("RG_SAP_ECP", "RG_SAP_QAS", "RG_SAP_DEV")) {
 }
 ```
 
-> **Note:** `Virtual Machine Contributor` is required for VM Run Command. A custom RBAC role with only
-> `Microsoft.Compute/virtualMachines/runCommand/action` + read permissions is recommended for production.
-> The proxy enforces a hardcoded allowlist of 14 read-only commands — no arbitrary shell execution is possible.
+> **Security note:** `Virtual Machine Contributor` is shown here for quick setup but grants more permissions
+> than needed (including VM delete/restart). For production, create a custom RBAC role with only
+> `Microsoft.Compute/virtualMachines/runCommand/action` + read permissions. The proxy enforces a hardcoded
+> allowlist of 14 read-only commands — no arbitrary shell execution is possible through the proxy.
 
 ### 5. Update Team Onboarding
 
