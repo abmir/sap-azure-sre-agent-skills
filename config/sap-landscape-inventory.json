@@ -1,7 +1,7 @@
 {
   "environment": "SAP-Lab",
   "subscription_id": "40050ff9-81f0-4654-9bd4-34551fe455df",
-  "storage_account": "stsreconfigs002",
+  "storage_account": "stsreconfigs004",
   "description": "SAP landscape inventory for Abbas SAP Lab — source of truth for all SRE Agent skills.",
   "ams": {
     "workspace_name": "sapmon-laws-eff092fcc1a1f0",
