@@ -31,12 +31,25 @@ def get_credential():
 
 # ─── Auth ────────────────────────────────────────────────────────────────────
 def validate_caller(req: Request):
-    """Validate using x-api-key header against AGENT_KEY_* env vars."""
+    """Validate caller identity. Supports two methods:
+    1. Entra ID (primary): Easy Auth validates the bearer token at the infrastructure level
+       and injects X-MS-CLIENT-PRINCIPAL-ID header. No token validation needed in code.
+    2. API Key (fallback): x-api-key header matched against AGENT_KEY_* env vars.
+    """
+    # Method 1: Entra ID — Easy Auth already validated the token
+    principal_id = req.headers.get("x-ms-client-principal-id", "")
+    if principal_id:
+        caller = req.headers.get("x-ms-client-principal-name", principal_id)
+        logger.info(json.dumps({"event": "auth", "method": "entra_id", "principal": principal_id}))
+        return True, caller
+
+    # Method 2: API Key fallback
     api_key = req.headers.get("x-api-key", "") or req.query_params.get("code", "")
     if not api_key:
         return False, None
     for key, value in os.environ.items():
         if key.startswith("AGENT_KEY_") and value == api_key:
+            logger.info(json.dumps({"event": "auth", "method": "api_key", "key_name": key}))
             return True, key.replace("AGENT_KEY_", "")
     return False, None
 
@@ -44,7 +57,7 @@ def require_auth(req: Request):
     valid, _ = validate_caller(req)
     if not valid:
         return JSONResponse(
-            {"error": "Unauthorized. Provide valid x-api-key header or code parameter."},
+            {"error": "Unauthorized. Provide Entra ID bearer token or valid x-api-key header."},
             status_code=401)
     return None
 
