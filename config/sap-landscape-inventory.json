@@ -1,0 +1,30 @@
+{
+  "environment": "SAP-Lab",
+  "subscription_id": "40050ff9-81f0-4654-9bd4-34551fe455df",
+  "storage_account": "stsreconfigs002",
+  "description": "SAP landscape inventory for Abbas SAP Lab — source of truth for all SRE Agent skills.",
+  "systems": [
+    {
+      "sid": "AB1",
+      "db_sid": "DB1",
+      "type": "single-server",
+      "criticality": "dev",
+      "resource_group": "RG_SAP_CUS_AB1",
+      "managed_rg": "mrg-AB1-48f3f2",
+      "vms": [
+        {
+          "name": "AB1vm",
+          "ip": "10.40.3.4",
+          "roles": ["db", "ascs", "pas"],
+          "sap_sidadm": "ab1adm",
+          "hana_sidadm": "db1adm",
+          "hana_instance": "00",
+          "ascs_instance": "01",
+          "app_instance": "00",
+          "os_user": "localadmin",
+          "auth_type": "key"
+        }
+      ]
+    }
+  ]
+}

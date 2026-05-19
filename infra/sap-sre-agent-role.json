@@ -14,6 +14,8 @@
   "DataActions": [],
   "NotDataActions": [],
   "AssignableScopes": [
-    "/subscriptions/<YOUR-SUBSCRIPTION-ID>"
+    "/subscriptions/f0d2c784-7d0e-4782-b092-cfe836ad97e5",
+    "/subscriptions/40050ff9-81f0-4654-9bd4-34551fe455df"
   ]
 }
+

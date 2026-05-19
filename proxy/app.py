@@ -231,9 +231,9 @@ ALLOWED_COMMANDS = {
     "crm_status": {"script": "crm status 2>&1", "description": "Pacemaker resource status", "requires_sidadm": False},
     "saphanasr_showattr": {"script": "SAPHanaSR-showAttr 2>&1", "description": "HSR site attributes", "requires_sidadm": False},
     "sapcontrol_getprocesslist": {"script": "su - {sidadm} -c 'sapcontrol -nr {instance} -function GetProcessList' 2>&1", "description": "SAP process list", "requires_sidadm": True},
-    "hdb_info": {"script": "su - {sidadm} -c 'HDB info' 2>&1", "description": "HANA process info", "requires_sidadm": True},
-    "hdb_version": {"script": "su - {sidadm} -c 'HDB version' 2>&1 | head -10", "description": "HANA version", "requires_sidadm": True},
-    "hsr_state": {"script": "su - {sidadm} -c 'hdbnsutil -sr_state' 2>&1", "description": "HSR replication state", "requires_sidadm": True},
+    "hdb_info": {"script": "su - {sidadm} -c '/usr/sap/{sid}/HDB{instance}/HDB info' 2>&1", "description": "HANA process info", "requires_sidadm": True},
+    "hdb_version": {"script": "su - {sidadm} -c '/usr/sap/{sid}/HDB{instance}/HDB version' 2>&1 | head -10", "description": "HANA version", "requires_sidadm": True},
+    "hsr_state": {"script": "su - {sidadm} -c '/usr/sap/{sid}/HDB{instance}/exe/hdbnsutil -sr_state' 2>&1", "description": "HSR replication state", "requires_sidadm": True},
     "systemctl_cluster": {"script": "systemctl status pacemaker corosync sbd 2>&1 | head -30", "description": "Cluster service status", "requires_sidadm": False},
     "df_hana": {"script": "df -h /hana/data /hana/log /hana/shared /usr/sap 2>&1", "description": "HANA filesystem usage", "requires_sidadm": False},
     "free_mem": {"script": "free -h 2>&1", "description": "Memory usage", "requires_sidadm": False},
@@ -441,7 +441,10 @@ async def execute_command(req: Request):
         if build_err:
             return JSONResponse({"error": build_err}, status_code=400)
     else:
-        script = cmd["script"].replace("{sidadm}", shlex.quote(sidadm)).replace("{instance}", shlex.quote(instance)).replace("{sid}", shlex.quote(sid))
+        # Inputs already validated by validate_input() with strict regex.
+        # Do NOT use shlex.quote() — it wraps values in single quotes which
+        # breaks paths like /usr/sap/{sid}/HDB{instance}/HDB.
+        script = cmd["script"].replace("{sidadm}", sidadm).replace("{instance}", instance).replace("{sid}", sid)
 
     logger.info(json.dumps({"event": "command_execute", "caller": caller, "command_id": command_id, "vm": vm, "rg": rg, "sid": sid, "sidadm": sidadm}))
 

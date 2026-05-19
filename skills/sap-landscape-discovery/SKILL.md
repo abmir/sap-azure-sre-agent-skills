@@ -24,12 +24,12 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 - "What SAP systems do I have?"
 - "Show SAP landscape inventory"
-- "Is AB1 running?" / "Show VM power state for all systems"
+- "Show VM power state for all systems"
 - "Discover SAP systems in my subscription"
 - "Add SAP system AB7 to inventory"
 - "Which systems are missing HA monitoring?"
 
-**Routing**: When a user asks "is X running?" or "is SAP up?" — handle it HERE (Mode 3 power state check). Do NOT route to the Command Executor internal tool.
+**Routing**: For full-stack status checks ("Is AB1 up?", "Is SAP running?") → route to SAP Operational Health. Use this skill only for inventory questions, VM power state queries in bulk, or system discovery.
 
 ## Modes
 

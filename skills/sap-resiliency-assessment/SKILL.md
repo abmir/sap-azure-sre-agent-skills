@@ -26,8 +26,10 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 - "Are our SAP VMs in availability zones?"
 - "Single points of failure?"
 - "Zone coverage analysis"
-- "Pacemaker health check"
+- "Pacemaker configuration compliance check"
 - "DR readiness check"
+
+**Routing**: For live Pacemaker/HSR state ("Is HSR in sync?", "Cluster status", "Takeover readiness?") → route to SAP HA Cluster Health. This skill checks *compliance* (Advisor recommendations, configuration best practices), not live cluster state.
 
 ## How It Works
 
