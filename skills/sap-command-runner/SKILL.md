@@ -29,38 +29,44 @@ Display command output **exactly as it appears on the VM** — preserve formatti
 
 ## Command Proxy
 
+The proxy uses **API key authentication** via the `X-API-Key` header. The API key is provided in Team Onboarding context. **IMPORTANT:** Always include `subscription_id` in the request body — the proxy runs in a different subscription than the SAP VMs.
+
 ```python
 import requests
+import json
 
-# PROXY_URL and PROXY_APP_ID come from Team Onboarding context
+# These values come from Team Onboarding context:
+# PROXY_URL = proxy URL from Data Sources section
+# API_KEY = API key from proxy auth section
+# SAP_SUB = SAP Subscription ID from Agent Identity section
 
-def get_proxy_token():
-    """Get Entra ID token for the proxy audience using the agent's Managed Identity."""
-    resp = requests.get("http://169.254.169.254/metadata/identity/oauth2/token",
-        params={"api-version": "2019-08-01", "resource": PROXY_APP_ID},
-        headers={"Metadata": "true"}, timeout=10)
-    resp.raise_for_status()
-    return resp.json()["access_token"]
-
-def run_command(vm_name, rg, command_id, sidadm=None, instance="00", sid=None):
-    token = get_proxy_token()
-    body = {"vm": vm_name, "rg": rg, "command_id": command_id}
+def run_command(command_id, vm="AB1vm", rg="RG_SAP_CUS_AB1", sidadm=None, instance="00", sid=None):
+    body = {
+        "vm": vm,
+        "rg": rg,
+        "command_id": command_id,
+        "subscription_id": SAP_SUB  # REQUIRED — proxy is in a different subscription
+    }
     if sidadm: body["sidadm"] = sidadm
     if instance: body["instance"] = instance
     if sid: body["sid"] = sid
     resp = requests.post(f"{PROXY_URL}/api/command",
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        json=body, timeout=120)
-    if resp.status_code == 200:
-        return resp.json().get("stdout", "")
-    return f"ERROR: {resp.status_code} — {resp.text}"
+        headers={"X-API-Key": API_KEY, "Content-Type": "application/json"},
+        json=body, timeout=180)
+    return {"status": resp.status_code, "output": resp.text}
 
 def list_available_commands():
-    token = get_proxy_token()
     resp = requests.get(f"{PROXY_URL}/api/commands",
-        headers={"Authorization": f"Bearer {token}"}, timeout=30)
+        headers={"X-API-Key": API_KEY}, timeout=30)
     return resp.json().get("commands", {}) if resp.status_code == 200 else {}
 ```
+
+### Critical: Split SID Systems
+
+Some systems have different SIDs for SAP and HANA. Check the landscape inventory for `sap_sidadm` and `hana_sidadm` fields:
+- **HANA commands** (`hdb_info`, `hdb_version`, `hsr_state`, `landscape_host_config`): use `hana_sidadm` and `db_sid`
+- **SAP commands** (`sapcontrol_getprocesslist`, `sapcontrol_getinstancelist`): use `sap_sidadm` and `sid`
+- Example: AB1 system has `sap_sidadm=ab1adm` (SID=AB1) and `hana_sidadm=db1adm` (DB SID=DB1)
 
 ## Available Commands (14 — all read-only)
 
@@ -86,13 +92,14 @@ All commands are read-only. None modify SAP state, HANA data, cluster config, or
 ## Identifying VM and Parameters
 
 Use the SAP landscape inventory (Knowledge Source) to resolve:
-- **vm**: VM hostname (e.g., `ab1vm`, `vm01`, `ab3dbvm`)
-- **rg**: Resource group containing the VM (e.g., `RG_SAP_AB1`)
-- **sidadm**: `<sid>adm` in lowercase (e.g., `ab1adm`, `db1adm`, `hsoadm`)
-- **instance**: HANA instance number, usually `00`
-- **sid**: SAP SID in uppercase (e.g., `AB1`, `HSO`)
+- **vm**: VM hostname (e.g., `AB1vm`)
+- **rg**: Resource group containing the VM (e.g., `RG_SAP_CUS_AB1`)
+- **subscription_id**: SAP Subscription from Team Onboarding Agent Identity section (e.g., `40050ff9-...`)
+- **sidadm**: Check `hana_sidadm` vs `sap_sidadm` in the inventory (e.g., `db1adm` for HANA, `ab1adm` for SAP)
+- **instance**: HANA instance number (usually `00`) or ASCS instance (usually `01`)
+- **sid**: SAP SID or DB SID in uppercase depending on the command type
 
-When the user says "run crm_mon on AB1", look up AB1 in the landscape inventory to find the VM name and resource group, then call `run_command()`.
+When the user says "run crm_mon on AB1", look up AB1 in the landscape inventory to find the VM name, resource group, and subscription, then call `run_command()`.
 
 ## Error Handling
 
