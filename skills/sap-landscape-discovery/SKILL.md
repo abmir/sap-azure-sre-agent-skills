@@ -47,7 +47,14 @@ Read from agent Knowledge Base (primary) or config proxy registry (fallback).
 
 ## Authentication
 
+**IMPORTANT — Azure API Access:** Do NOT use IMDS tokens (169.254.169.254) or ManagedIdentityCredential — they are not available in the agent sandbox. Instead:
+- For Azure Resource Manager queries: Use the built-in `GetArmResourceAsJson` or `RunAzCliReadCommands` tools
+- For Log Analytics queries: Use the built-in `QueryLogAnalyticsByWorkspaceId` tool  
+- For metrics: Use the built-in `GetMetricTimeSeriesElementsForAzureResource` tool
+- For proxy HTTP calls: Use `ExecutePythonCode` with `X-API-Key` header (API key from Team Onboarding)
+
 ```python
+# Only use ExecutePythonCode for proxy HTTP calls. Use built-in tools for Azure API access.
 import requests, json
 
 # SUB_ID: Use subscription_id from Team Onboarding
@@ -57,29 +64,6 @@ import requests, json
 
 # COMMAND_PROXY_URL: Use command_proxy_url from Team Onboarding
 # COMMAND_PROXY_KEY: Use command_proxy_api_key from Team Onboarding
-
-def get_mi_token(resource):
-    resp = requests.get("http://169.254.169.254/metadata/identity/oauth2/token",
-        params={"api-version": "2019-08-01", "resource": resource},
-        headers={"Metadata": "true"}, timeout=10)
-    resp.raise_for_status()
-    return resp.json()["access_token"]
-
-def arm_get(path, api_version="2023-09-01"):
-    token = get_mi_token("https://management.azure.com/")
-    url = f"https://management.azure.com{path}?api-version={api_version}"
-    resp = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=60)
-    resp.raise_for_status()
-    return resp.json()
-
-def query_resource_graph(query):
-    token = get_mi_token("https://management.azure.com/")
-    resp = requests.post(
-        "https://management.azure.com/providers/Microsoft.ResourceGraph/resources?api-version=2021-03-01",
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        json={"query": query, "subscriptions": [SUB_ID]}, timeout=60)
-    resp.raise_for_status()
-    return resp.json().get("data", [])
 
 def get_landscape_from_proxy():
     resp = requests.get(f"{PROXY_URL}/registry", headers={"x-api-key": PROXY_KEY}, timeout=30)

@@ -48,26 +48,17 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 ## Authentication
 
+**IMPORTANT — Azure API Access:** Do NOT use IMDS tokens (169.254.169.254) or ManagedIdentityCredential — they are not available in the agent sandbox. Instead:
+- For Azure Resource Manager queries: Use the built-in `GetArmResourceAsJson` or `RunAzCliReadCommands` tools
+- For Log Analytics queries: Use the built-in `QueryLogAnalyticsByWorkspaceId` tool  
+- For metrics: Use the built-in `GetMetricTimeSeriesElementsForAzureResource` tool
+- For proxy HTTP calls: Use `ExecutePythonCode` with `X-API-Key` header (API key from Team Onboarding)
+
 ```python
+# Only use ExecutePythonCode for proxy HTTP calls. Use built-in tools for Azure API access.
 import requests, json
 
 # SUB_ID: Use subscription_id from Team Onboarding
-
-def get_token(resource="https://management.azure.com/"):
-    resp = requests.get("http://169.254.169.254/metadata/identity/oauth2/token",
-        params={"api-version": "2019-08-01", "resource": resource},
-        headers={"Metadata": "true"}, timeout=10)
-    resp.raise_for_status()
-    return resp.json()["access_token"]
-
-def arm_get(path, api_version="2023-09-01"):
-    token = get_token()
-    url = f"https://management.azure.com{path}"
-    sep = "&" if "?" in url else "?"
-    url += f"{sep}api-version={api_version}"
-    resp = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=60)
-    resp.raise_for_status()
-    return resp.json()
 ```
 
 ## Check 1: SKU Catalog

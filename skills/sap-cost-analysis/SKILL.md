@@ -31,7 +31,14 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 ## Authentication
 
+**IMPORTANT — Azure API Access:** Do NOT use IMDS tokens (169.254.169.254) or ManagedIdentityCredential — they are not available in the agent sandbox. Instead:
+- For Azure Resource Manager queries: Use the built-in `GetArmResourceAsJson` or `RunAzCliReadCommands` tools
+- For Log Analytics queries: Use the built-in `QueryLogAnalyticsByWorkspaceId` tool  
+- For metrics: Use the built-in `GetMetricTimeSeriesElementsForAzureResource` tool
+- For proxy HTTP calls: Use `ExecutePythonCode` with `X-API-Key` header (API key from Team Onboarding)
+
 ```python
+# Only use ExecutePythonCode for proxy HTTP calls. Use built-in tools for Azure API access.
 import requests, json
 from datetime import datetime, timedelta, timezone
 
@@ -39,20 +46,6 @@ from datetime import datetime, timedelta, timezone
 
 # PROXY_URL: Use config_proxy_url from Team Onboarding
 # PROXY_KEY: Use config_proxy_api_key from Team Onboarding
-
-def get_mi_token(resource):
-    resp = requests.get("http://169.254.169.254/metadata/identity/oauth2/token",
-        params={"api-version": "2019-08-01", "resource": resource},
-        headers={"Metadata": "true"}, timeout=10)
-    resp.raise_for_status()
-    return resp.json()["access_token"]
-
-def arm_get(path, api_version="2023-09-01"):
-    token = get_mi_token("https://management.azure.com/")
-    url = f"https://management.azure.com{path}?api-version={api_version}"
-    resp = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=60)
-    resp.raise_for_status()
-    return resp.json()
 
 def get_landscape_registry():
     resp = requests.get(f"{PROXY_URL}/registry", headers={"x-api-key": PROXY_KEY}, timeout=30)

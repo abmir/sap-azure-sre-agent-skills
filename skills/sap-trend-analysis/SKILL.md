@@ -46,7 +46,14 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 ## Authentication
 
+**IMPORTANT — Azure API Access:** Do NOT use IMDS tokens (169.254.169.254) or ManagedIdentityCredential — they are not available in the agent sandbox. Instead:
+- For Azure Resource Manager queries: Use the built-in `GetArmResourceAsJson` or `RunAzCliReadCommands` tools
+- For Log Analytics queries: Use the built-in `QueryLogAnalyticsByWorkspaceId` tool  
+- For metrics: Use the built-in `GetMetricTimeSeriesElementsForAzureResource` tool
+- For proxy HTTP calls: Use `ExecutePythonCode` with `X-API-Key` header (API key from Team Onboarding)
+
 ```python
+# Only use ExecutePythonCode for proxy HTTP calls. Use built-in tools for Azure API access.
 import requests, json, math
 from datetime import datetime, timedelta, timezone
 
@@ -61,25 +68,6 @@ from datetime import datetime, timedelta, timezone
 
 # VM commands are executed via the SAP Command Executor skill (never directly)
 # When T3 mode needs to act on a recommendation, invoke SAP Command Executor
-
-def get_mi_token(resource):
-    resp = requests.get("http://169.254.169.254/metadata/identity/oauth2/token",
-        params={"api-version": "2019-08-01", "resource": resource},
-        headers={"Metadata": "true"}, timeout=10)
-    resp.raise_for_status()
-    return resp.json()["access_token"]
-
-def query_log_analytics(query, timespan_hours=168):
-    token = get_mi_token("https://api.loganalytics.io/")
-    now = datetime.now(timezone.utc)
-    start = (now - timedelta(hours=timespan_hours)).isoformat()
-    end = now.isoformat()
-    resp = requests.post(
-        f"https://api.loganalytics.io/v1/workspaces/{AMS_WORKSPACE_ID}/query",
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        json={"query": query, "timespan": f"{start}/{end}"}, timeout=120)
-    resp.raise_for_status()
-    return resp.json()
 ```
 
 ## Forecasting Metrics
