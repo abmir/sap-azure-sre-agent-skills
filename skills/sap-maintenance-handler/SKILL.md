@@ -9,7 +9,6 @@ tools:
     - QueryLogAnalyticsByWorkspaceId
     - GetMetricTimeSeriesElementsForAzureResource
     - CreateScheduledMonitoringTask
-    - CreateScheduledMonitoringTask
 ---
 
 ## Environment Configuration

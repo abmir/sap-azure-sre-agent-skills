@@ -5,7 +5,6 @@ tools:
     - ExecutePythonCode
     - RunAzCliReadCommands
     - GetArmResourceAsJson
-    - PlotBarChart
 ---
 
 ## Environment Configuration
@@ -64,6 +63,7 @@ import requests, json
 ## Check 1: SKU Catalog
 
 ```python
+# Pseudocode — use GetArmResourceAsJson or RunAzCliReadCommands tool instead
 def check_sku_in_region(target_sku, region):
     skus = arm_get(f"/subscriptions/{SUB_ID}/providers/Microsoft.Compute/skus?$filter=location eq '{region}'", "2021-07-01")
     for sku in skus.get("value", []):
@@ -83,6 +83,7 @@ def check_sku_in_region(target_sku, region):
 ## Check 2: Quota
 
 ```python
+# Pseudocode — use GetArmResourceAsJson or RunAzCliReadCommands tool instead
 def check_quota(region, family_name):
     usages = arm_get(f"/subscriptions/{SUB_ID}/providers/Microsoft.Compute/locations/{region}/usages")
     for usage in usages.get("value", []):

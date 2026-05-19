@@ -184,7 +184,8 @@ if (Test-Path $CollectorScript) {
 
 # ── Step 4: Container Registry ──
 Write-Step "Step 4/8 — Container Registry"
-az acr create --name $AcrName -g $RG -l $Location --sku Basic --admin-enabled false --output none 2>$null
+# Premium SKU required for private endpoint support in MCAP
+az acr create --name $AcrName -g $RG -l $Location --sku Premium --admin-enabled false --output none 2>$null
 if ($LASTEXITCODE -ne 0) { throw "Failed to create ACR '$AcrName'. Name may already be taken." }
 Write-OK "$AcrName (Basic)"
 
@@ -241,7 +242,7 @@ az containerapp create --name $ProxyName -g $RG `
     --registry-identity $UMI_ID `
     --user-assigned $UMI_ID `
     --ingress external --target-port 8000 `
-    --min-replicas 1 --max-replicas 3 `
+    --min-replicas 0 --max-replicas 3 `
     --cpu 0.5 --memory 1.0Gi `
     --env-vars `
         AZURE_CLIENT_ID=$UMI_CLIENT_ID `

@@ -9,6 +9,8 @@ tools:
 
 All environment-specific values (proxy URL, API key, SAP landscape) are provided via the Team Onboarding instructions. The agent reads these from the onboarding context at runtime. Do not hardcode environment values in this skill.
 
+**Data Reuse (AAU Optimization)**: If the same command was already run on this VM earlier in this conversation, return the cached result instead of re-executing. Only re-execute if the user explicitly asks to refresh or re-run.
+
 ## When to Use
 
 - "Run crm_mon on vm01" / "Show cluster status on vm01"

@@ -8,11 +8,6 @@ tools:
     - QueryLogAnalyticsByWorkspaceId
     - PlotBarChart
     - PlotHeatmap
-    - CheckIfResourceExists
-    - GetActivityLogsSummary
-    - QueryLogAnalyticsByWorkspaceId
-    - PlotBarChart
-    - PlotHeatmap
 ---
 
 ## Environment Configuration

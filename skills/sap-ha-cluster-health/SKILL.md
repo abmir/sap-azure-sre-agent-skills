@@ -9,10 +9,6 @@ tools:
     - QueryLogAnalyticsByWorkspaceId
     - GetMetricTimeSeriesElementsForAzureResource
     - PlotAreaChartWithCorrelation
-    - CheckTcpConnectivity
-    - GetArmResourceAsJson
-    - RunAzCliReadCommands
-    - PlotAreaChartWithCorrelation
     - PlotScatter
 ---
 

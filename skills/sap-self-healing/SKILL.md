@@ -104,6 +104,7 @@ def check_backup_freshness(sid):
     | summarize LastBackup=max(UTC_END_TIME_t) by SID_s, ENTRY_TYPE_NAME_s
     | order by LastBackup desc
     """
+    # Pseudocode — use QueryLogAnalyticsByWorkspaceId tool instead
     return query_log_analytics(query, timespan_hours=72)
 
 def handle_stale_backup(vm_name, rg, sidadm):

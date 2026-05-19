@@ -10,8 +10,6 @@ tools:
     - PlotAreaChartWithCorrelation
     - PlotBarChart
     - PlotScatter
-    - PlotAreaChartWithCorrelation
-    - PlotBarChart
 ---
 
 ## Environment Configuration

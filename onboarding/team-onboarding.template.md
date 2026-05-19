@@ -78,7 +78,7 @@ You are an SAP on Azure SRE agent with **12 skills + 1 command runner**. Most sk
 - The proxy UMI (`sre-ops-umi`) has the custom RBAC role "Custom - SAP SRE Agent Operator" on SAP RGs — it executes commands on behalf of the agent
 - Cross-subscription: proxy is in MCAP sub, SAP VMs are in Abbas External sub. The UMI has RBAC on both.
 - Proxy enforces a hardcoded allowlist of 14 read-only commands — no arbitrary shell execution
-- 12 of 14 commands are read-only. Self-Healing and Maintenance Handler may trigger log backups, sysctl reapplication, or graceful SAP shutdown within strict guardrails.
+- All 14 current proxy commands are read-only. Self-Healing and Maintenance Handler skills require additional write commands (not yet added to proxy) for log backup, sysctl reapply, and graceful shutdown.
 
 ## Knowledge Base
 

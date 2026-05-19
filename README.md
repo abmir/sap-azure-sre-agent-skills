@@ -1,6 +1,6 @@
 # SAP Azure SRE Agent
 
-12 SRE skills + 1 command runner for SAP HANA and NetWeaver on Azure. All read-only — zero changes to your SAP environment.
+12 SRE skills + 1 command runner for SAP HANA and NetWeaver on Azure. 11 read-only skills + 2 autonomous remediation skills (Self-Healing, Maintenance Handler) with strict guardrails.
 
 **10 skills work on Day 1** with just Azure APIs. Deploy the optional command proxy to unlock live VM queries.
 

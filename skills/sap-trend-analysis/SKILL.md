@@ -4,14 +4,9 @@ description: "Analyzes trends in HANA memory, disk utilization, CPU, and replica
 tools:
     - ExecutePythonCode
     - RunAzCliReadCommands
+    - GetArmResourceAsJson
     - QueryLogAnalyticsByWorkspaceId
     - GetMetricTimeSeriesElementsForAzureResource
-    - CreateScheduledMonitoringTask
-    - PlotAreaChartWithCorrelation
-    - PlotScatter
-    - PlotBarChart
-    - RunAzCliReadCommands
-    - GetArmResourceAsJson
     - CreateScheduledMonitoringTask
     - PlotAreaChartWithCorrelation
     - PlotScatter

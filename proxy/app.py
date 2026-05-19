@@ -497,3 +497,132 @@ async def execute_command(req: Request):
 def health():
     """Health check endpoint for Container Apps probes."""
     return JSONResponse({"status": "healthy"})
+
+
+@app.post("/api/batch")
+async def batch_commands(req: Request):
+    """Execute multiple allowed commands on a single VM in one request.
+    Body: {"vm": "AB1vm", "rg": "RG_SAP_CUS_AB1", "subscription_id": "...",
+           "commands": [{"command_id": "uptime"}, {"command_id": "free_mem"},
+                        {"command_id": "hdb_info", "sidadm": "db1adm", "sid": "DB1", "instance": "00"}]}
+    Returns: {"vm": "...", "results": {"uptime": {"stdout": "..."}, "free_mem": {"stdout": "..."}, ...}}
+    Max 6 commands per batch to limit execution time.
+    """
+    valid, caller = validate_caller(req)
+    if not valid:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    try:
+        body = await req.json()
+    except ValueError:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+    vm = body.get("vm", "").strip()
+    rg = body.get("rg", "").strip()
+    sub_id = body.get("subscription_id", "").strip() or SUB_ID
+    commands = body.get("commands", [])
+
+    if not vm or not rg:
+        return JSONResponse({"error": "Missing vm or rg"}, status_code=400)
+    if not commands or not isinstance(commands, list):
+        return JSONResponse({"error": "Missing or invalid commands array"}, status_code=400)
+    if len(commands) > 6:
+        return JSONResponse({"error": "Max 6 commands per batch"}, status_code=400)
+
+    # Validate all commands before executing any
+    for c in commands:
+        cid = c.get("command_id", "")
+        if cid not in ALLOWED_COMMANDS:
+            return JSONResponse({"error": f"Unknown command: {cid}", "available": list(ALLOWED_COMMANDS.keys())}, status_code=400)
+        if cid == "deploy_collector":
+            return JSONResponse({"error": "deploy_collector not allowed in batch"}, status_code=400)
+
+    # Build combined script
+    scripts = []
+    for i, c in enumerate(commands):
+        cid = c.get("command_id", "")
+        cmd = ALLOWED_COMMANDS[cid]
+        sidadm = c.get("sidadm", "").strip()
+        instance = c.get("instance", "00").strip()
+        sid = c.get("sid", "").strip().upper()
+
+        if cmd["requires_sidadm"] and not sidadm:
+            return JSONResponse({"error": f"Command '{cid}' requires sidadm"}, status_code=400)
+        err = validate_input(vm, rg, sidadm, instance)
+        if err:
+            return JSONResponse({"error": err}, status_code=400)
+
+        script = cmd["script"].replace("{sidadm}", sidadm).replace("{instance}", instance).replace("{sid}", sid)
+        scripts.append(f'echo "===BATCH_CMD_{i}_{cid}==="\n{script}')
+
+    combined = "\n".join(scripts)
+    logger.info(json.dumps({"event": "batch_execute", "caller": caller, "vm": vm, "rg": rg, "count": len(commands)}))
+
+    try:
+        token = get_mi_token()
+        url = f"https://management.azure.com/subscriptions/{sub_id}/resourceGroups/{rg}/providers/Microsoft.Compute/virtualMachines/{vm}/runCommand?api-version=2024-03-01"
+        resp = http_requests.post(url,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={"commandId": "RunShellScript", "script": [combined]}, timeout=300)
+
+        if resp.status_code == 202:
+            location = resp.headers.get("Location") or resp.headers.get("Azure-AsyncOperation")
+            if not location:
+                return JSONResponse({"error": "202 but no Location header"}, status_code=502)
+            for attempt in range(40):
+                _time.sleep(5)
+                poll = http_requests.get(location, headers={"Authorization": f"Bearer {token}"}, timeout=30)
+                if poll.status_code == 200:
+                    data = poll.json()
+                    status = data.get("status", data.get("provisioningState", "Succeeded"))
+                    if status.lower() in ("succeeded", ""):
+                        stdout, stderr = parse_run_command_output(data)
+                        # Split output by batch markers
+                        results = {}
+                        for i, c in enumerate(commands):
+                            cid = c.get("command_id", "")
+                            marker = f"===BATCH_CMD_{i}_{cid}==="
+                            next_marker = f"===BATCH_CMD_{i+1}_" if i + 1 < len(commands) else None
+                            start = stdout.find(marker)
+                            if start == -1:
+                                results[cid] = {"stdout": "", "error": "marker not found"}
+                                continue
+                            start += len(marker) + 1  # skip newline
+                            if next_marker:
+                                end = stdout.find(next_marker, start)
+                                if end == -1:
+                                    end = len(stdout)
+                            else:
+                                end = len(stdout)
+                            results[cid] = {"stdout": stdout[start:end].strip()}
+                        return JSONResponse({"vm": vm, "rg": rg, "count": len(commands), "results": results})
+                    elif status.lower() == "failed":
+                        return JSONResponse({"error": "Batch run-command failed", "detail": str(data)[:500]}, status_code=502)
+                elif poll.status_code != 202:
+                    return JSONResponse({"error": f"Poll returned {poll.status_code}"}, status_code=502)
+            return JSONResponse({"error": "Batch timed out after 200s"}, status_code=504)
+
+        elif resp.status_code == 200:
+            stdout, stderr = parse_run_command_output(resp.json())
+            results = {}
+            for i, c in enumerate(commands):
+                cid = c.get("command_id", "")
+                marker = f"===BATCH_CMD_{i}_{cid}==="
+                next_marker = f"===BATCH_CMD_{i+1}_" if i + 1 < len(commands) else None
+                start = stdout.find(marker)
+                if start == -1:
+                    results[cid] = {"stdout": ""}
+                    continue
+                start += len(marker) + 1
+                end = stdout.find(next_marker, start) if next_marker else len(stdout)
+                if end == -1:
+                    end = len(stdout)
+                results[cid] = {"stdout": stdout[start:end].strip()}
+            return JSONResponse({"vm": vm, "rg": rg, "count": len(commands), "results": results})
+        else:
+            return JSONResponse({"error": f"Batch failed: {resp.status_code}", "detail": resp.text[:500]}, status_code=502)
+
+    except http_requests.exceptions.Timeout:
+        return JSONResponse({"error": "Batch timeout — VM unresponsive"}, status_code=504)
+    except Exception as e:
+        logger.error(f"Batch error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)

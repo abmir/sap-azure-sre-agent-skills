@@ -6,7 +6,6 @@ tools:
     - RunAzCliReadCommands
     - GetArmResourceAsJson
     - QueryLogAnalyticsByWorkspaceId
-    - GetMetricTimeSeriesElementsForAzureResource
     - PlotBarChart
 ---
 
@@ -73,6 +72,7 @@ def get_landscape_from_proxy():
 ## Mode 1: Auto-discover
 
 ```python
+# Pseudocode — use GetArmResourceAsJson or RunAzCliReadCommands tool instead
 def discover_from_tags():
     query = """
     resources
@@ -83,6 +83,7 @@ def discover_from_tags():
     """
     return query_resource_graph(query)
 
+# Pseudocode — use GetArmResourceAsJson or RunAzCliReadCommands tool instead
 def discover_from_vis():
     try:
         vis_list = arm_get(f"/subscriptions/{SUB_ID}/providers/Microsoft.Workloads/sapVirtualInstances", "2023-10-01-preview")
@@ -94,6 +95,7 @@ def discover_from_vis():
 ## Mode 3: Power State Check
 
 ```python
+# Pseudocode — use GetArmResourceAsJson or RunAzCliReadCommands tool instead
 def check_power_state(vm_name, rg):
     iv = arm_get(f"/subscriptions/{SUB_ID}/resourceGroups/{rg}/providers/Microsoft.Compute/virtualMachines/{vm_name}/instanceView")
     statuses = iv.get("statuses", [])
