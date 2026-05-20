@@ -27,7 +27,8 @@ if [ -z "$VM_NAME" ]; then
 fi
 TIMESTAMP=$(date +%Y-%m-%d_%H%M%S)
 DATE_DIR=$(date +%Y-%m-%d)
-LOG_FILE="/var/log/sre-config-collect.log"
+LOG_FILE="/opt/sre/collector.log"
+STAGING_DIR="/opt/sre/staging"
 
 SAP_SID=""
 DB_SID=""
@@ -64,12 +65,14 @@ fi
 # Default DB_SID to SAP_SID if not specified
 [ -z "$DB_SID" ] && DB_SID="$SAP_SID"
 
-COLLECT_DIR="/tmp/sap-configs-${VM_NAME}-${TIMESTAMP}"
-ARCHIVE_NAME="sap-configs-${VM_NAME}-${TIMESTAMP}.tar.gz"
-
-# Determine blob path: SID/vmname/latest/
+# Mirror blob hierarchy locally: /opt/sre/sap-configs/{SID}/{hostname}/latest/
 BLOB_SID="${SAP_SID:-SBD}"
 BLOB_PREFIX="${BLOB_SID}/${VM_NAME}"
+COLLECT_DIR="/opt/sre/sap-configs/${BLOB_PREFIX}/latest"
+ARCHIVE_NAME="sap-configs-${VM_NAME}-${TIMESTAMP}.tar.gz"
+
+# Ensure directories exist
+mkdir -p "$COLLECT_DIR" "$STAGING_DIR"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
@@ -101,8 +104,11 @@ has_role() {
 log "========================================="
 log "SAP Config Collection Started"
 log "VM: ${VM_NAME} | SID: ${SAP_SID:-N/A} | DB_SID: ${DB_SID:-N/A} | Roles: ${ROLES}"
+log "Local path: /opt/sre/sap-configs/${BLOB_PREFIX}/latest/"
 log "========================================="
 
+# Clear previous latest/ and recreate (ensures no stale files)
+rm -rf "${COLLECT_DIR}"
 mkdir -p "${COLLECT_DIR}"
 
 # =========================================
@@ -327,6 +333,25 @@ df -hT > "${COLLECT_DIR}/os/disk-usage.txt" 2>/dev/null || true
 lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT > "${COLLECT_DIR}/os/lsblk.txt" 2>/dev/null || true
 ip addr show > "${COLLECT_DIR}/os/ip-addr.txt" 2>/dev/null || true
 
+# LVM stripe info (STAF checks DB-HANA-0034, DB-HANA-0036)
+if command -v lvs &>/dev/null; then
+    {
+        echo "=== LVM Stripe Info ==="
+        # For each HANA mount, find LV and its stripe size
+        for mnt in /hana/data /hana/log /hana/shared /usr/sap; do
+            dev=$(df --output=source "$mnt" 2>/dev/null | tail -1)
+            if [ -n "$dev" ] && lvs "$dev" &>/dev/null; then
+                stripe=$(lvs --segments --noheadings -o stripe_size "$dev" 2>/dev/null | head -1 | tr -d ' ')
+                stripes=$(lvs --segments --noheadings -o stripes "$dev" 2>/dev/null | head -1 | tr -d ' ')
+                echo "$mnt: device=$dev stripe_size=$stripe stripes=$stripes"
+            else
+                echo "$mnt: device=$dev stripe_size=N/A (not LVM or no stripes)"
+            fi
+        done
+    } > "${COLLECT_DIR}/os/lvm-stripes.txt" 2>/dev/null || true
+    log "  OK: LVM stripe info"
+fi
+
 # Time sync config
 if command -v chronyc &>/dev/null; then
     chronyc tracking > "${COLLECT_DIR}/os/chrony-tracking.txt" 2>/dev/null || true
@@ -370,6 +395,71 @@ log "  OK: softdog config/module"
 log "  OK: network drivers"
 
 # =========================================
+# Additional OS data for STAF coverage
+# =========================================
+log "Collecting additional STAF coverage data..."
+
+# Kernel version (DB-HANA-0026-0029, IC-0008, IC-0030)
+uname -r > "${COLLECT_DIR}/os/uname-r.txt" 2>/dev/null || true
+log "  OK: uname -r"
+
+# Sector/block size for HANA volumes (DB-HANA-0039, DB-HANA-0040)
+{
+    echo "/hana/data: $(stat -f -c '%s' /hana/data 2>/dev/null || echo 'N/A')"
+    echo "/hana/log: $(stat -f -c '%s' /hana/log 2>/dev/null || echo 'N/A')"
+} > "${COLLECT_DIR}/os/stat-block-size.txt" 2>/dev/null || true
+log "  OK: stat block sizes"
+
+# IMDS metadata (IC-0001-0005, IC-0009)
+curl -s -H "Metadata:true" --connect-timeout 5 \
+    "http://169.254.169.254/metadata/instance?api-version=2021-02-01" \
+    > "${COLLECT_DIR}/os/imds-metadata.json" 2>/dev/null || echo '{}' > "${COLLECT_DIR}/os/imds-metadata.json"
+log "  OK: IMDS metadata"
+
+# OS release parsing (IC-0011, IC-0012)
+collect_file "/etc/os-release" "os"
+log "  OK: /etc/os-release"
+
+# Timezone (IC-0013)
+timedatectl 2>/dev/null > "${COLLECT_DIR}/os/timezone.txt" || date +%Z > "${COLLECT_DIR}/os/timezone.txt"
+log "  OK: timezone"
+
+# KDUMP config (IC-0041)
+{
+    echo "=== KDUMP Config ==="
+    if [ -f /etc/sysconfig/kdump ]; then
+        grep -v "^#" /etc/sysconfig/kdump | grep -v "^$"
+    elif [ -f /etc/default/kdump-tools ]; then
+        grep -v "^#" /etc/default/kdump-tools | grep -v "^$"
+    else
+        echo "kdump config not found"
+    fi
+    echo ""
+    echo "=== KDUMP Service ==="
+    systemctl is-active kdump 2>/dev/null || echo "unknown"
+} > "${COLLECT_DIR}/os/kdump-config.txt" 2>/dev/null || true
+log "  OK: kdump config"
+
+# Installed packages — security endpoint checks (FC-0001 to FC-0015)
+{
+    if command -v rpm &>/dev/null; then
+        rpm -qa 2>/dev/null | sort
+    elif command -v dpkg &>/dev/null; then
+        dpkg -l 2>/dev/null | awk '/^ii/{print $2"-"$3}'
+    fi
+} > "${COLLECT_DIR}/os/installed-packages.txt" 2>/dev/null || true
+log "  OK: installed packages"
+
+# Microsoft Defender health (FC-0008 to FC-0015)
+if command -v mdatp &>/dev/null; then
+    timeout 15 mdatp health > "${COLLECT_DIR}/os/mdatp-health.txt" 2>/dev/null || echo "mdatp health failed" > "${COLLECT_DIR}/os/mdatp-health.txt"
+    log "  OK: mdatp health"
+else
+    echo "mdatp not installed" > "${COLLECT_DIR}/os/mdatp-health.txt"
+    log "  SKIP: mdatp not installed"
+fi
+
+# =========================================
 # Manifest
 # =========================================
 log "Creating manifest..."
@@ -405,8 +495,8 @@ log "Creating manifest..."
 # Archive & Upload
 # =========================================
 log "Creating archive..."
-tar -czf "/tmp/${ARCHIVE_NAME}" -C /tmp "sap-configs-${VM_NAME}-${TIMESTAMP}"
-log "Archive: /tmp/${ARCHIVE_NAME}"
+tar -czf "${STAGING_DIR}/${ARCHIVE_NAME}" -C "/opt/sre/sap-configs/${BLOB_PREFIX}" latest
+log "Archive: ${STAGING_DIR}/${ARCHIVE_NAME}"
 
 log "Authenticating with UMI (${UMI_CLIENT_ID})..."
 az login --identity --username "$UMI_CLIENT_ID" --output none 2>/dev/null
@@ -421,7 +511,7 @@ az storage blob upload \
     --account-name "$STORAGE_ACCOUNT" \
     --container-name "$CONTAINER" \
     --name "${BLOB_PREFIX}/${DATE_DIR}/${ARCHIVE_NAME}" \
-    --file "/tmp/${ARCHIVE_NAME}" \
+    --file "${STAGING_DIR}/${ARCHIVE_NAME}" \
     --auth-mode login \
     --output none 2>/dev/null || log "WARN: archive upload failed (may be network rules)"
 
@@ -437,10 +527,9 @@ az storage blob upload-batch \
 
 log "Upload complete."
 
-# Cleanup
-rm -rf "${COLLECT_DIR}"
-rm -f "/tmp/${ARCHIVE_NAME}"
-log "Temp files cleaned up."
+# Cleanup staging
+rm -rf "${STAGING_DIR}"
+log "Staging cleaned up. Latest configs retained at: /opt/sre/sap-configs/${BLOB_PREFIX}/latest/"
 
 log "========================================="
 log "Collection complete. Files at:"

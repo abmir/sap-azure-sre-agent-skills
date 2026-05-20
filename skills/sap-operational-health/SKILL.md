@@ -158,4 +158,27 @@ AB1 — Overall: 🟢 GREEN
   L3 Cluster:        ⚪ N/A (no HA)
   L4 HANA:           🟢 (ACTIVE, DB1 online)
   L5 SAP App:        🟡 (Instance 02 dispatcher GRAY)
+  Alerts:            🟢 No active alerts for AB1
 ```
+
+### Alert Filtering — CRITICAL
+
+**When checking alerts for a specific SAP system, ALWAYS filter by that system's provider instance tag.**
+
+Alert rules in AMS are scoped to the shared Log Analytics workspace, which monitors ALL SAP systems (AB1, HSO, etc.). If you query alerts without filtering, you will see alerts from OTHER systems — causing false positives.
+
+**How to filter:**
+1. When querying fired alerts via `RunAzCliReadCommands`, filter by the `sap-system` or `profile-id` tag on the alert rule
+2. Use this pattern:
+```
+az monitor scheduled-query list --resource-group mrg-sapmon-abb --subscription {SUB_ID} --query "[?tags.\"sap-system\"=='{SID}']"
+```
+3. Or when listing fired alert instances, cross-reference the alert rule name against the system being checked
+
+**Provider instance mapping** (from Team Onboarding):
+| System | AMS Provider Instance | Alert Tag |
+|--------|----------------------|-----------|
+| AB1 | `sap-hana-pr-AB1` | `sap-system: AB1` |
+| HSO | `hana-pr-HSO` | `profile-id: hana-pr-HSO` |
+
+**NEVER show alerts from system X when the user asks about system Y.** If unsure which system an alert belongs to, check the alert rule's KQL query for the `PROVIDER_INSTANCE_s` filter or the alert rule's tags.

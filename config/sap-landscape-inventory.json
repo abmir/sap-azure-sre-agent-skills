@@ -15,6 +15,10 @@
       "db_sid": "DB1",
       "type": "single-server",
       "criticality": "dev",
+      "os_type": "SLES_SAP",
+      "storage_type": "Premium_LRS",
+      "ha_type": "false",
+      "ha_agent": "none",
       "resource_group": "RG_SAP_CUS_AB1",
       "managed_rg": "mrg-AB1-48f3f2",
       "ams_providers": {
