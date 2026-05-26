@@ -49,7 +49,7 @@ from datetime import datetime, timedelta, timezone
 # PROXY_KEY: Use config_proxy_api_key from Team Onboarding
 
 def get_landscape_registry():
-    resp = requests.get(f"{PROXY_URL}/registry", headers={"x-api-key": PROXY_KEY}, timeout=30)
+    resp = requests.get(f"{PROXY_URL}/api/registry", headers={"x-api-key": PROXY_KEY}, timeout=30)
     return resp.json() if resp.status_code == 200 else None
 ```
 

@@ -99,7 +99,7 @@ def get_ha_data_live(vm_name, rg):
 
 def get_ha_data_blob(sid, hostname):
     """Fallback: fetch HA/DR data from blob config files (stale, 4-6h old)."""
-    resp = requests.get(f"{PROXY_URL}/configs/{sid}/{hostname}", headers={"x-api-key": PROXY_KEY}, timeout=60)
+    resp = requests.get(f"{PROXY_URL}/api/configs/{sid}/{hostname}", headers={"x-api-key": PROXY_KEY}, timeout=60)
     if resp.status_code == 200:
         data = resp.json()
         return {"source": "blob", "data": data.get("files", {}), "timestamp": data.get("last_modified", "unknown")}

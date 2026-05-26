@@ -65,7 +65,7 @@ import requests, json
 # COMMAND_PROXY_KEY: Use command_proxy_api_key from Team Onboarding
 
 def get_landscape_from_proxy():
-    resp = requests.get(f"{PROXY_URL}/registry", headers={"x-api-key": PROXY_KEY}, timeout=30)
+    resp = requests.get(f"{PROXY_URL}/api/registry", headers={"x-api-key": PROXY_KEY}, timeout=30)
     return resp.json() if resp.status_code == 200 else None
 ```
 

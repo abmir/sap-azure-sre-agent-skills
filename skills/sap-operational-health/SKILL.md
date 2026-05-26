@@ -64,7 +64,7 @@ from datetime import datetime, timedelta, timezone
 # COMMAND_PROXY_KEY: Use command_proxy_api_key from Team Onboarding
 
 def get_landscape_registry():
-    resp = requests.get(f"{PROXY_URL}/registry", headers={"x-api-key": PROXY_KEY}, timeout=30)
+    resp = requests.get(f"{PROXY_URL}/api/registry", headers={"x-api-key": PROXY_KEY}, timeout=30)
     return resp.json() if resp.status_code == 200 else None
 
 def get_vm_data_live(vm_name, rg, commands):
@@ -79,7 +79,7 @@ def get_vm_data_live(vm_name, rg, commands):
 
 def get_vm_configs_fallback(sid, hostname):
     """Fallback: fetch VM config data from blob (stale, 4-6h old)."""
-    resp = requests.get(f"{PROXY_URL}/configs/{sid}/{hostname}", headers={"x-api-key": PROXY_KEY}, timeout=60)
+    resp = requests.get(f"{PROXY_URL}/api/configs/{sid}/{hostname}", headers={"x-api-key": PROXY_KEY}, timeout=60)
     if resp.status_code == 200:
         data = resp.json()
         return {"source": "blob", "data": data.get("files", {}), "timestamp": data.get("last_modified", "unknown")}
