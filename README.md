@@ -15,6 +15,8 @@ AI-powered SRE agent for SAP HANA and NetWeaver on Azure. Automates health monit
 
 ## Architecture
 
+![Azure SRE Agent for SAP Workloads — architecture](docs/sap-on-azure-sre-agent.png)
+
 ```
 ┌────────────────────────────────────────────────┐
 │ Azure SRE Agent (sre.azure.com)                │
