@@ -1,6 +1,6 @@
 ---
 name: sap-config-validator
-description: "Validates SAP system configurations against Microsoft's SAP Testing Automation Framework (STAF). Pulls STAF check definitions live from the public Azure/sap-automation-qa GitHub repo, reads collected VM configs from the customer's sap-configs blob container, and runs the comparison entirely in-skill. Requires Mode 2 or Mode 3. Read-only."
+description: "Validates SAP system configurations against Microsoft's SAP Testing Automation Framework (STAF). Pulls STAF check definitions live from the public Azure/sap-automation-qa GitHub repo, reads collected VM configs from the customer's sap-configs blob container, and runs the comparison entirely in-skill. Requires a Storage Account in Deployed Infrastructure. Read-only."
 tools:
     - ExecutePythonCode
     - RunAzCliReadCommands
@@ -41,7 +41,7 @@ This skill **requires a Storage Account** in the `## Deployed Infrastructure` se
 
 1. **Never invent or fabricate checks.** Every check ID, expected value, and reference must come from the STAF YAML fetched from GitHub. If GitHub is unreachable and no checks load, report the failure and stop.
 2. **Never deploy anything.** No collector deployment, no VM commands, no infrastructure changes.
-3. **Never use `az vm run-command`.** If configs are missing or stale, instruct the user to trigger the collector separately (Mode 3: ask `sap-command-runner` to run `run_collector`).
+3. **Never use `az vm run-command`.** If configs are missing or stale, instruct the user to trigger the collector separately (if SRE Proxy is deployed: ask `sap-command-runner` to run `run_collector`).
 4. **Present results exactly as computed** — do not add, remove, or modify any check result.
 
 ### STAF YAML schema (verified against `Azure/sap-automation-qa` @ `main`)
@@ -61,7 +61,7 @@ Each YAML file has a top-level `checks:` list. Each check has:
 
 ### Step 1 — Download collected configs from blob
 
-Use `RunAzCliReadCommands`. The values for `<storage>`, `<SID>`, and `<host>` come from the Team Onboarding `## Deployment Mode` and `## SAP Landscape` sections. Authentication is the agent's own Managed Identity (`--auth-mode login`) — no keys, no SAS.
+Use `RunAzCliReadCommands`. The values for `<storage>`, `<SID>`, and `<host>` come from the Team Onboarding `## Deployed Infrastructure` and `## SAP Landscape` sections. Authentication is the agent's own Managed Identity (`--auth-mode login`) — no keys, no SAS.
 
 ```bash
 # 1a. Confirm fresh configs exist
@@ -78,7 +78,7 @@ az storage blob download-batch \
 ```
 
 If the blob list is empty or the newest file is older than 14 days, **stop and report**:
-*"No fresh collected configs found for `<SID>/<host>` in `<storage>/sap-configs`. The collector may not be installed on this VM. Trigger collection (Mode 3: ask `sap-command-runner` to run `run_collector`; Mode 2: `az vm run-command invoke -g <RG> -n <vm> --command-id RunShellScript --scripts 'sudo /opt/sre/run-collector.sh'`) and re-run this validation."*
+*"No fresh collected configs found for `<SID>/<host>` in `<storage>/sap-configs`. The collector may not be installed on this VM. Trigger collection (if SRE Proxy is deployed: ask `sap-command-runner` to run `run_collector`; otherwise: `az vm run-command invoke -g <RG> -n <vm> --command-id RunShellScript --scripts 'sudo /opt/sre/run-collector.sh'`) and re-run this validation."*
 
 ### Step 2 — Fetch STAF definitions and run the comparison
 

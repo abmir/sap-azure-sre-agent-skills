@@ -2,7 +2,7 @@
 
 AI-powered SRE agent for SAP HANA and NetWeaver on Azure. Automates health monitoring, STAF configuration validation, incident analysis, and cost optimization — all through natural language at [sre.azure.com](https://sre.azure.com).
 
-**Three adoption modes** — pick what fits your security posture. Start with zero-infrastructure Azure-native telemetry, add a customer-controlled config store when you want STAF compliance, add a brokered command proxy when you're ready for live remediation. See [Adoption Modes](#adoption-modes) below.
+**Three adoption tiers** — pick what fits your security posture. Start with zero-infrastructure Azure-native telemetry, add a customer-controlled config store when you want STAF compliance, add a brokered command proxy when you’re ready for live remediation. See [Adoption Tiers](#adoption-tiers) below.
 
 ## Architecture
 
@@ -15,8 +15,8 @@ AI-powered SRE agent for SAP HANA and NetWeaver on Azure. Automates health monit
 │  Tools: ARM API, AMS KQL, Azure Monitor, CLI, Python     │
 │  Knowledge: SAP landscape, SAP Notes, STAF references    │
 └──────────┬────────────────┬────────────────┬─────────────┘
-           │ Mode 1         │ Mode 2         │ Mode 3
-           │ (always on)    │ (config-aware) │ (live ops)
+           │ Azure APIs   │ + Config Store │ + Live Proxy
+           │ (always on)  │ (storage)      │ (proxy)
            ▼                ▼                ▼
    ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐
    │ Azure APIs  │  │ Config Store │  │ SRE Proxy        │
@@ -38,53 +38,53 @@ AI-powered SRE agent for SAP HANA and NetWeaver on Azure. Automates health monit
                    └────────────────────────────────────┘
 ```
 
-STAF check definitions live in the public [`Azure/sap-automation-qa`](https://github.com/Azure/sap-automation-qa) repo and are pulled live by the Config Validator skill (Mode 2+) — they are not hosted by Microsoft inside this stack.
+STAF check definitions live in the public [`Azure/sap-automation-qa`](https://github.com/Azure/sap-automation-qa) repo and are pulled live by the Config Validator skill (requires a Storage Account) — they are not hosted by Microsoft inside this stack.
 
 ## What It Does
 
-| Capability | Example Prompt | Min. Mode | How It Works |
-|-----------|----------------|:---------:|-------------|
-| Landscape discovery | "What SAP systems do I have?" | 1 | Azure Resource Graph |
-| Health monitoring | "Is AB1 healthy?" | 1 | AMS telemetry + Azure Monitor + ARM API |
-| Cost analysis | "How much does AB1 cost?" | 1 | Azure Cost Management API |
-| Trend analysis | "Show memory trends for AB1" | 1 | AMS time-series with regression |
-| Resiliency assessment | "Assess AB1 resiliency" | 1 | Azure Advisor + ACSS checks |
-| Deployment readiness | "Can I deploy Standard_M32 in eastus?" | 1 | SKU / quota / HANA certification |
-| Incident analysis (basic) | "Why did HANA restart?" | 1 | AMS + Activity Log correlation |
-| Performance diagnostics (basic) | "Why is AB1 slow?" | 1 | AMS + Azure Monitor metrics |
-| HA cluster health (basic) | "Cluster status for AB1" | 1 | AMS + Resource Graph |
-| Maintenance handler (basic) | "Any scheduled maintenance?" | 1 | Scheduled Events API + Service Health |
-| **Config validation (STAF)** | "Run config checks for AB1" | **2** | STAF YAML fetched live from `Azure/sap-automation-qa` on GitHub, compared against blob-stored VM configs — entirely in-skill, no proxy |
-| **Config-enriched RCA / perf / cluster** | "Cross-layer RCA for AB1" | 2 | Adds stored config files (sysctl, global.ini, corosync) to incident / performance / HA skills |
-| **Live VM commands** | "Run uptime on AB1vm" | **3** | Proxy → ARM run-command API (14-command allowlist, read-only) |
-| **Self-healing remediation** | Auto: `/hana/log` full → log backup | 3 | Proxy executes restricted write commands within strict guardrails |
+| Capability | Example Prompt | Requires | How It Works |
+|-----------|----------------|:--------:|-------------|
+| Landscape discovery | "What SAP systems do I have?" | — | Azure Resource Graph |
+| Health monitoring | "Is AB1 healthy?" | — | AMS telemetry + Azure Monitor + ARM API |
+| Cost analysis | "How much does AB1 cost?" | — | Azure Cost Management API |
+| Trend analysis | "Show memory trends for AB1" | — | AMS time-series with regression |
+| Resiliency assessment | "Assess AB1 resiliency" | — | Azure Advisor + ACSS checks |
+| Deployment readiness | "Can I deploy Standard_M32 in eastus?" | — | SKU / quota / HANA certification |
+| Incident analysis (basic) | "Why did HANA restart?" | — | AMS + Activity Log correlation |
+| Performance diagnostics (basic) | "Why is AB1 slow?" | — | AMS + Azure Monitor metrics |
+| HA cluster health (basic) | "Cluster status for AB1" | — | AMS + Resource Graph |
+| Maintenance handler (basic) | "Any scheduled maintenance?" | — | Scheduled Events API + Service Health |
+| **Config validation (STAF)** | "Run config checks for AB1" | **Storage Account** | STAF YAML fetched live from `Azure/sap-automation-qa` on GitHub, compared against blob-stored VM configs — entirely in-skill, no proxy |
+| **Config-enriched RCA / perf / cluster** | "Cross-layer RCA for AB1" | Storage Account | Adds stored config files (sysctl, global.ini, corosync) to incident / performance / HA skills |
+| **Live VM commands** | "Run uptime on AB1vm" | **SRE Proxy** | Proxy → ARM run-command API (14-command allowlist, read-only) |
+| **Self-healing remediation** | Auto: `/hana/log` full → log backup | SRE Proxy | Proxy executes restricted write commands within strict guardrails |
 
-## Adoption Modes
+## Adoption Tiers
 
-The agent supports three deployment modes. Each mode is a strict superset of the previous one — start with Mode 1, add Mode 2 when you need config-level visibility, add Mode 3 when you're ready to execute live commands on SAP VMs.
+The agent supports three deployment tiers. Each tier is a strict superset of the previous one — start with Azure-native, add a config store when you need config-level visibility, add the proxy when you're ready for live commands. Skills auto-detect what's available from the `## Deployed Infrastructure` section in Team Onboarding — no mode numbers to manage.
 
-| Mode | What's Deployed | Capabilities | Customer Profile | Effort |
+| Tier | What's Deployed | Capabilities | Customer Profile | Effort |
 |:----:|----------------|--------------|------------------|:------:|
-| **1 — Azure-Native** | Nothing (just `sre.azure.com` + your existing AMS) | 10 skills using only Azure APIs and AMS telemetry. No config validation, no live commands. | Security-strict customers. AMS already deployed. Wants insight without standing up new infra. | ~30 min |
-| **2 — + Config Store** | Mode 1 + **Storage Account** (`sap-configs` blob container) + **collector UMI** (assigned to SAP VMs) | All Mode 1 skills + **STAF config validation** + config-enriched RCA / performance / HA skills. 11 skills total. | Wants STAF compliance reporting and richer RCA, but does not want a proxy executing live commands. | ~1 hr |
-| **3 — + Live Proxy** | Mode 2 + **Container App proxy** (FastAPI, VNet-integrated) + **proxy UMI** + Entra ID Easy Auth | All Mode 2 skills + **live read-only VM commands** + **self-healing remediation**. All 13 skills. | Wants full SRE automation including remediation. Accepts a brokered command path with custom RBAC. | ~2 hr |
+| **Azure-Native** | Nothing (just `sre.azure.com` + your existing AMS) | 10 skills using only Azure APIs and AMS telemetry. No config validation, no live commands. | Security-strict customers. AMS already deployed. Wants insight without standing up new infra. | ~30 min |
+| **+ Config Store** | **Storage Account** (`sap-configs` blob container) + **collector UMI** (assigned to SAP VMs) | All base skills + **STAF config validation** + config-enriched RCA / performance / HA skills. 11 skills total. | Wants STAF compliance reporting and richer RCA, but does not want a proxy executing live commands. | ~1 hr |
+| **+ Live Proxy** | Config Store + **Container App proxy** (FastAPI, VNet-integrated) + **proxy UMI** + Entra ID Easy Auth | All skills including **live read-only VM commands** + **self-healing remediation**. All 13 skills. | Wants full SRE automation including remediation. Accepts a brokered command path with custom RBAC. | ~2 hr |
 
-### How each mode handles config validation
+### How config validation works
 
-- **Mode 1** — Config Validator is disabled. The agent reports that it requires Mode 2 or higher.
-- **Mode 2** — The Config Validator skill **fetches STAF check definitions directly from `Azure/sap-automation-qa` on GitHub at runtime**, reads collected configs from your storage account, and runs the comparison **in-skill** (Python via `ExecutePythonCode`). No proxy involved.
-- **Mode 3** — Same as Mode 2, with the added option to trigger a fresh on-demand collection through the proxy before validating.
+- **No Storage Account** — Config Validator tells the user a storage account is needed.
+- **Storage Account deployed** — The Config Validator skill **fetches STAF check definitions directly from `Azure/sap-automation-qa` on GitHub at runtime**, reads collected configs from your storage account, and runs the comparison **in-skill** (Python via `ExecutePythonCode`). No proxy involved.
+- **Proxy also deployed** — Same as above, with the added option to trigger a fresh on-demand collection through the proxy before validating.
 
-### Switching modes later
+### Adding infrastructure later
 
-- **Mode 1 → Mode 2** — Run the deploy script with `-Mode ConfigStore -SreAgentUmiPrincipalId <agent-mi-object-id>`; assign the collector UMI to SAP VMs; deploy the collector. Import the Config Validator skill on the portal.
-- **Mode 2 → Mode 3** — Run the deploy script with `-Mode Full`; re-paste the team onboarding with the proxy URL + API key + Mode 3 declaration. Import the two remaining skills (`sap-command-runner`, `sap-self-healing`).
+- **Add Config Store** — Run the deploy script with `-Mode ConfigStore -SreAgentUmiPrincipalId <agent-mi-object-id>`; assign the collector UMI to SAP VMs; deploy the collector. Add the `Storage Account` line to Team Onboarding. Import the Config Validator skill on the portal.
+- **Add Live Proxy** — Run the deploy script with `-Mode Full`; add the `SRE Proxy` line to Team Onboarding. Import `sap-command-runner` and `sap-self-healing` skills.
 
-### Skills × Modes capability matrix
+### Skills × Infrastructure capability matrix
 
-How each of the 13 custom skills behaves under each mode. **Full** = skill operates at its full design intent. **Degraded** = skill still answers but with reduced fidelity (clearly disclosed to the user). **Blocked** = skill refuses politely and explains the mode requirement.
+How each of the 13 custom skills behaves based on what infrastructure is deployed. **Full** = skill operates at its full design intent. **Enhanced** = skill adds config or live data. **Blocked** = skill refuses politely and explains what's needed.
 
-| # | Skill | Mode 1 | Mode 2 | Mode 3 | Notes |
+| # | Skill | No infra | + Storage Account | + SRE Proxy | Notes |
 |:-:|------|:------:|:------:|:------:|------|
 | 1 | `sap-landscape-discovery` | ✅ Full | ✅ Full | ✅ Full | Pure ARM API |
 | 2 | `sap-operational-health` | ✅ Full | ✅ Full | ✅ + live | Already has graceful proxy fallback |
@@ -92,15 +92,15 @@ How each of the 13 custom skills behaves under each mode. **Full** = skill opera
 | 4 | `sap-trend-analysis` | ✅ Full | ✅ Full | ✅ Full | Pure AMS KQL |
 | 5 | `sap-deployment-readiness` | ✅ Full | ✅ Full | ✅ Full | Pure ARM + SAP Notes |
 | 6 | `sap-resiliency-assessment` | ✅ Full | ✅ Full | ✅ Full | Pure Advisor + ACSS |
-| 7 | `sap-incident-analysis` | ⚠️ AMS-only (degraded) | ✅ + stored configs | ✅ + live OS state | Mode 2 adds sysctl / global.ini / corosync context |
-| 8 | `sap-maintenance-handler` | ⚠️ Basic (degraded) | ✅ + pre-checks | ✅ Full | Mode 2 reads collected configs for pre-flight; Mode 3 can execute the freeze sequence |
-| 9 | `sap-performance-diagnostics` | ⚠️ Metrics-only (degraded) | ✅ + HANA configs | ✅ + live HANA SQL | Mode 3 adds live `hdbsql` via proxy |
-| 10 | `sap-ha-cluster-health` | ⚠️ ILB probes only (degraded) | ✅ + corosync / SBD | ✅ + live `crm_mon` | Mode 1 can only infer cluster state from load balancer probes |
-| 11 | `sap-config-validator` | ❌ Blocked | ✅ Storage-direct (in-skill) | ✅ Storage-direct + on-demand collection | STAF YAML fetched from GitHub at runtime — no proxy required |
-| 12 | `sap-command-runner` | ❌ Blocked | ❌ Blocked | ✅ Full | Inherently Mode 3 — needs the proxy to reach VMs |
-| 13 | `sap-self-healing` | ❌ Blocked | ❌ Blocked | ✅ Full | Inherently Mode 3 — needs the proxy to execute remediation |
+| 7 | `sap-incident-analysis` | ⚠️ AMS-only | ✅ + stored configs | ✅ + live OS state | Storage adds sysctl / global.ini / corosync context |
+| 8 | `sap-maintenance-handler` | ⚠️ Detect-only | ✅ + pre-checks | ✅ Full | Storage adds config pre-flight; proxy enables execution |
+| 9 | `sap-performance-diagnostics` | ⚠️ Metrics-only | ✅ + HANA configs | ✅ + live HANA SQL | Proxy adds live `hdbsql` |
+| 10 | `sap-ha-cluster-health` | ⚠️ ILB probes only | ✅ + corosync / SBD | ✅ + live `crm_mon` | No infra = load balancer probes + AMS only |
+| 11 | `sap-config-validator` | ❌ Blocked | ✅ In-skill (blob + GitHub) | ✅ + on-demand collection | STAF YAML fetched from GitHub at runtime — no proxy required |
+| 12 | `sap-command-runner` | ❌ Blocked | ❌ Blocked | ✅ Full | Needs the proxy to reach VMs |
+| 13 | `sap-self-healing` | ❌ Blocked | ❌ Blocked | ✅ Full | Needs the proxy to execute remediation |
 
-**Net skill counts per mode**: Mode 1 = 6 full + 4 degraded = 10 working skills. Mode 2 = 11 full + 2 blocked. Mode 3 = 13 full.
+**Net skill counts**: No infra = 6 full + 4 degraded = 10 working. + Storage = 11 full + 2 blocked. + Storage + Proxy = 13 full.
 
 ## Repository Layout
 
@@ -167,23 +167,23 @@ The setup has three phases:
 
 **Step 6: Incident Platform** → Select Azure Monitor.
 
-**Step 7: Import Skills** → Skill Builder → New → paste each `skills/<name>/SKILL.md` (import only the skills your chosen mode supports):
+**Step 7: Import Skills** → Skill Builder → New → paste each `skills/<name>/SKILL.md`. Import all 13 — each skill auto-detects available infrastructure at runtime:
 
-| # | Skill | Min. Mode | Purpose |
-|---|-------|:---------:|---------|
-| 1 | sap-landscape-discovery | 1 | System inventory from ARM |
-| 2 | sap-operational-health | 1 | 5-layer health dashboard |
-| 3 | sap-cost-analysis | 1 | Cost breakdown + savings |
-| 4 | sap-trend-analysis | 1 | AMS trend projection |
-| 5 | sap-resiliency-assessment | 1 | Advisor + ACSS checks |
-| 6 | sap-deployment-readiness | 1 | SKU / quota / certification |
-| 7 | sap-incident-analysis | 1 | Cross-layer RCA (enriched in Mode 2+) |
-| 8 | sap-performance-diagnostics | 1 | HANA memory / disk / savepoint (enriched in Mode 2+) |
-| 9 | sap-ha-cluster-health | 1 | Pacemaker / HSR status (enriched in Mode 2+) |
-| 10 | sap-maintenance-handler | 1 | Graceful maintenance handling (enriched in Mode 2+) |
-| 11 | sap-config-validator | **2** | STAF compliance — fetches STAF YAML live from GitHub, compares against blob configs in-skill |
-| 12 | sap-command-runner | **3** | 14 read-only VM commands via proxy |
-| 13 | sap-self-healing | **3** | Log volume + backup + drift remediation |
+| # | Skill | Requires | Purpose |
+|---|-------|:--------:|---------|
+| 1 | sap-landscape-discovery | — | System inventory from ARM |
+| 2 | sap-operational-health | — | 5-layer health dashboard |
+| 3 | sap-cost-analysis | — | Cost breakdown + savings |
+| 4 | sap-trend-analysis | — | AMS trend projection |
+| 5 | sap-resiliency-assessment | — | Advisor + ACSS checks |
+| 6 | sap-deployment-readiness | — | SKU / quota / certification |
+| 7 | sap-incident-analysis | — | Cross-layer RCA (enhanced with Storage Account) |
+| 8 | sap-performance-diagnostics | — | HANA memory / disk / savepoint (enhanced with Storage Account) |
+| 9 | sap-ha-cluster-health | — | Pacemaker / HSR status (enhanced with Storage Account) |
+| 10 | sap-maintenance-handler | — | Graceful maintenance handling (enhanced with Storage Account) |
+| 11 | sap-config-validator | **Storage Account** | STAF compliance — fetches STAF YAML live from GitHub, compares against blob configs in-skill |
+| 12 | sap-command-runner | **SRE Proxy** | 14 read-only VM commands via proxy |
+| 13 | sap-self-healing | **SRE Proxy** | Log volume + backup + drift remediation |
 
 **Step 8: Managed Resources** → Add: all SAP RGs, AMS RG, `rg-sre-proxy` (created in Phase 2).
 
@@ -194,13 +194,13 @@ The setup has three phases:
 
 ---
 
-### Phase 2 — Infrastructure (mode-dependent)
+### Phase 2 — Infrastructure (tier-dependent)
 
-This phase depends on which adoption mode you chose ([Adoption Modes](#adoption-modes)):
+This phase depends on which adoption tier you chose ([Adoption Tiers](#adoption-tiers)):
 
-- **Mode 1 (Azure-Native)** — Skip this entire phase. There is nothing to deploy. Grant the SRE Agent Managed Identity `Reader` + `Monitoring Reader` on each SAP RG (and `Cost Management Reader` at subscription scope), then proceed to Phase 3.
-- **Mode 2 (ConfigStore)** — Run the deploy script with `-Mode ConfigStore -SreAgentUmiPrincipalId <agent-mi-object-id>`. This creates only the resource group, collector UMI, storage account with `sap-configs` container, custom RBAC role, and grants the SRE Agent UMI `Storage Blob Data Reader` on the container. Then assign the collector UMI to SAP VMs (Step 12) and install the collector (Step 14 alt: use `az vm run-command` instead of the proxy). Skip Steps 11 and 13 — no proxy means no proxy UMI to grant on SAP RGs, and no storage firewall rules are needed for the proxy subnet.
-- **Mode 3 (Full)** — Default. Run the deploy script with no `-Mode` flag (or `-Mode Full`). Follow all of Steps 10–14 below.
+- **Azure-Native only** — Skip this entire phase. There is nothing to deploy. Grant the SRE Agent Managed Identity `Reader` + `Monitoring Reader` on each SAP RG (and `Cost Management Reader` at subscription scope), then proceed to Phase 3.
+- **+ Config Store** — Run the deploy script with `-Mode ConfigStore -SreAgentUmiPrincipalId <agent-mi-object-id>`. This creates only the resource group, collector UMI, storage account with `sap-configs` container, custom RBAC role, and grants the SRE Agent UMI `Storage Blob Data Reader` on the container. Then assign the collector UMI to SAP VMs (Step 12) and install the collector (Step 14 alt: use `az vm run-command` instead of the proxy). Skip Steps 11 and 13 — no proxy means no proxy UMI to grant on SAP RGs, and no storage firewall rules are needed for the proxy subnet.
+- **+ Live Proxy** — Default. Run the deploy script with no `-Mode` flag (or `-Mode Full`). Follow all of Steps 10–14 below.
 
 > **All Phase 2 resources go in the same subscription as your SAP VMs.** Cross-subscription is supported but adds RBAC complexity.
 
@@ -212,23 +212,23 @@ cd sap-azure-sre-agent
 az login
 az account set --subscription "<sap-subscription-id>"
 
-# Mode 3 — Full (default):
-.\infra\deploy-sre-infra.ps1 `
+# Full (default — deploys storage + proxy):
+.\ infra\deploy-sre-infra.ps1 `
     -SubscriptionId "<sap-subscription-id>" `
     -StorageAccountName "<globally-unique-name>"   # 3-24 chars, lowercase + numbers
 
-# Mode 2 — Config Store only (no proxy):
+# Config Store only (no proxy):
 .\infra\deploy-sre-infra.ps1 `
     -Mode ConfigStore `
     -SubscriptionId "<sap-subscription-id>" `
     -StorageAccountName "<globally-unique-name>" `
     -SreAgentUmiPrincipalId "<agent-mi-object-id-from-sre.azure.com>"
 
-# Mode 1 — Azure-Native (prints manual steps and exits, no infra deployed):
+# Azure-Native (prints manual steps and exits, no infra deployed):
 .\infra\deploy-sre-infra.ps1 -Mode AzureNative -SubscriptionId "<sap-subscription-id>"
 ```
 
-What it creates in `rg-sre-proxy` (Mode 3 — Full):
+What it creates in `rg-sre-proxy` (Full deploy):
 - VNet `vnet-sre-ops` (10.60.0.0/16) with delegated subnet for Container Apps
 - Storage account with `sap-configs` container (Entra ID auth only, no shared keys)
 - ACR `acrsreproxy<sub-prefix>` (Premium) — builds `sre-proxy:latest` image
@@ -327,9 +327,9 @@ ssh <vm> "sudo /opt/sre/run-collector.sh && tail -20 /opt/sre/collector.log"
 **Step 15: Fill Team Onboarding Template**
 
 Edit `onboarding/team-onboarding.template.md` with:
-- Your **deployment mode** (1, 2, or 3) — set the `## Deployment Mode` block at the top
-- Mode 2/3: Storage account name + `sap-configs` container
-- Mode 3 only: Proxy URL + API key (from Step 10 output) + Proxy UMI client/principal IDs
+- Your **deployed infrastructure** — add Storage Account and/or SRE Proxy lines to the `## Deployed Infrastructure` section
+- If Storage Account deployed: storage account name + `sap-configs` container
+- If SRE Proxy deployed: Proxy URL + API key (from Step 10 output) + Proxy UMI client/principal IDs
 - AMS workspace ID + provider instance names
 - SAP landscape table (SID, RG, VMs, roles, IPs)
 - Subscription ID
@@ -338,15 +338,15 @@ Paste the filled template into sre.azure.com → Settings → Team Onboarding.
 
 **Step 16: Quick Verification (3 minutes)**
 
-Mode 1 — Azure-Native:
+Azure-Native (no infra deployed):
 
 | # | Test | Expected |
 |---|------|----------|
 | 1 | At sre.azure.com: "Is AB1 healthy?" | 5-layer health dashboard |
 | 2 | At sre.azure.com: "How much does AB1 cost?" | Cost breakdown |
-| 3 | At sre.azure.com: "Run config checks for AB1" | Skill reports `Config Validator requires Mode 2+` |
+| 3 | At sre.azure.com: "Run config checks for AB1" | Skill reports that a Storage Account is needed |
 
-Mode 2 — + Config Store:
++ Config Store (Storage Account deployed):
 
 | # | Test | Expected |
 |---|------|----------|
@@ -355,19 +355,19 @@ Mode 2 — + Config Store:
 | 3 | At sre.azure.com: "Run config checks for AB1" | STAF compliance report (skill pulled STAF YAML live from GitHub, compared against blob configs) |
 | 4 | At sre.azure.com: "How much does AB1 cost?" | Cost breakdown |
 
-Mode 3 — + Live Proxy (all Mode 2 tests above PLUS):
++ Live Proxy (all Config Store tests above PLUS):
 
 | # | Test | Expected |
 |---|------|----------|
 | 5 | `curl https://<proxy>/api/health` | `{"status":"healthy"}` |
 | 6 | `curl -H "X-API-Key: <key>" https://<proxy>/api/diag` | MI token + ARM call both OK |
-| 7 | `curl -H "X-API-Key: <key>" https://<proxy>/api/configs/<sid>/<host>` | List of config files in blob (fallback path; Mode 2 skills read blob directly) |
+| 7 | `curl -H "X-API-Key: <key>" https://<proxy>/api/configs/<sid>/<host>` | List of config files in blob (fallback path; skills with Storage Account read blob directly) |
 | 8 | At sre.azure.com: "Run uptime on AB1vm" | VM uptime via proxy |
 
-**Step 17: Verify Collector is Running (Mode 2 / Mode 3)**
+**Step 17: Verify Collector is Running (requires Storage Account)**
 
 ```powershell
-# Trigger fresh collection on a VM (Mode 2 — use az vm run-command; Mode 3 — POST /api/command with run_collector)
+# Trigger fresh collection on a VM (without proxy — use az vm run-command; with proxy — POST /api/command with run_collector)
 az vm run-command invoke -g <SAP-RG> -n <vm-name> --command-id RunShellScript `
     --scripts "sudo /opt/sre/run-collector.sh && tail -20 /opt/sre/collector.log"
 
@@ -445,7 +445,7 @@ The `sap-config-validator` skill performs the entire flow client-side via `Execu
 3. Agent presents the report to the user verbatim.
 ```
 
-This keeps the proxy focused on its one job — brokered VM command execution — and lets the Config Validator skill work in Mode 2 (no proxy deployed) as well as Mode 3.
+This keeps the proxy focused on its one job — brokered VM command execution — and lets the Config Validator skill work with just a Storage Account (no proxy needed).
 
 ---
 
@@ -453,7 +453,7 @@ This keeps the proxy focused on its one job — brokered VM command execution �
 
 | Identity | Assigned to | Purpose | RBAC |
 |----------|------------|---------|------|
-| SRE Agent MI | SRE Agent platform | Azure API queries + direct blob reads (Mode 2+) | Reader on SAP RGs, Log Analytics Reader on AMS LAW, **Storage Blob Data Reader on the `sap-configs` storage account** (Mode 2+ only — required by `sap-config-validator` skill) |
+| SRE Agent MI | SRE Agent platform | Azure API queries + direct blob reads (when Storage Account deployed) | Reader on SAP RGs, Log Analytics Reader on AMS LAW, **Storage Blob Data Reader on the `sap-configs` storage account** (only when Storage Account is deployed — required by `sap-config-validator` skill) |
 | sre-proxy-umi | Container App | VM commands + blob + ARM queries | Custom - SAP SRE Agent Operator on SAP RGs; Storage Blob Data Contributor on storage; AcrPull on ACR |
 | sre-collector-umi | SAP VMs | Config upload to blob | Storage Blob Data Contributor on storage |
 
