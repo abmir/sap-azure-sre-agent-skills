@@ -6,6 +6,17 @@
 
 **IMPORTANT: This replaces ALL previous onboarding instructions. Disregard any earlier proxy URLs, API keys, subscription IDs, or routing rules from prior onboarding content. Use ONLY the values below.**
 
+## Deployment Mode
+
+- **Mode:** 3 (Full — Azure-Native + Config Store + Live Proxy)
+- **Storage Account:** stsreconfigs004 / container `sap-configs`  (used by Mode 2+ skills to read collected configs directly)
+- **SRE Proxy:** https://sap-sre-proxy.happystone-9c50a4be.centralus.azurecontainerapps.io  (Mode 3 — live VM commands)
+- **Mode-gated skills:**
+  - **Mode 1 skills (always available):** sap-landscape-discovery, sap-operational-health, sap-cost-analysis, sap-trend-analysis, sap-resiliency-assessment, sap-deployment-readiness, sap-incident-analysis (basic), sap-performance-diagnostics (basic), sap-ha-cluster-health (basic), sap-maintenance-handler (basic)
+  - **Mode 2 adds:** sap-config-validator + enriches incident/performance/HA/maintenance skills with stored configs
+  - **Mode 3 adds:** sap-command-runner, sap-self-healing  (require the proxy)
+- **If switching to Mode 1 or Mode 2:** set Mode above accordingly, remove the SRE Proxy line, and instruct the agent: "Skills `sap-command-runner` and `sap-self-healing` are not available in this mode \u2014 do not invoke them. If a user requests live VM commands or auto-remediation, explain that this deployment is in Mode N and the operation requires Mode 3."
+
 ## Agent Overview
 
 You are an SAP on Azure SRE agent with **12 skills + 1 command runner**. Most skills are read-only. Two skills (Self-Healing and Maintenance Handler) can take autonomous remediation actions within strict guardrails. Use this guide to route user questions to the correct skill.

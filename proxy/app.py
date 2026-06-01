@@ -805,9 +805,15 @@ def _check_applicable(check, os_type, roles, db_type, storage_type, ha_type, ha_
     return True, None
 
 
-@app.get("/api/staf-checks")
+@app.get("/api/staf-checks", deprecated=True)
 def get_staf_checks(req: Request):
-    """Fetch STAF check definitions from GitHub, filter by applicability, return JSON.
+    """[DEPRECATED] Fetch STAF check definitions from GitHub, filter by applicability, return JSON.
+
+    DEPRECATED as of 2026-06: The rewritten sap-config-validator skill fetches STAF
+    YAML files directly from GitHub in-skill (ExecutePythonCode + requests). This
+    endpoint is retained only so previously-imported skill versions continue to
+    work during migration. Schedule for removal once all customers have re-imported
+    the new sap-config-validator skill. See README.md > Adoption Modes.
 
     Query params:
       os_type      — SLES_SAP | REDHAT
@@ -1411,10 +1417,18 @@ def _compare_values(actual, check):
     return "not_evaluated", {"reason": f"unsupported validator: {vtype}"}
 
 
-@app.get("/api/validate/{sid}/{hostname}")
+@app.get("/api/validate/{sid}/{hostname}", deprecated=True)
 def validate_config(sid: str, hostname: str, req: Request):
-    """Full server-side STAF validation with fresh+fallback for both
+    """[DEPRECATED] Full server-side STAF validation with fresh+fallback for both
     STAF checks and config data.
+
+    DEPRECATED as of 2026-06: The rewritten sap-config-validator skill now runs
+    the entire validation flow client-side (in-skill via ExecutePythonCode):
+    fetches STAF YAML from GitHub, reads collected configs from blob with
+    RunAzCliReadCommands, performs the comparison in Python, and formats the
+    report. This endpoint is retained only for backward compat with previously
+    imported skill versions — schedule for removal once all customers have
+    re-imported the new skill. See README.md > Adoption Modes.
 
     Flow:
       1. STAF: GitHub live → save blob snapshot → fallback to blob snapshot

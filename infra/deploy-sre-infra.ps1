@@ -1,60 +1,99 @@
 <#
 .SYNOPSIS
-    SAP SRE Agent — One-Step Infrastructure Deployment (Container App)
+    SAP SRE Agent — Infrastructure Deployment (mode-aware: AzureNative / ConfigStore / Full)
 
 .DESCRIPTION
-    Creates the SRE operations resource group with: VNet, Storage Account,
-    Managed Identity, Container Registry, and Container App.
-    Builds container image in ACR and deploys to Azure Container Apps
-    with VNet integration for secure storage access via service endpoints.
+    Deploys the infrastructure required by the SAP SRE Agent. Three modes are
+    supported:
+
+      AzureNative  — Prints instructions and exits. No Azure infra is created.
+                     The agent uses only Azure-native data sources (AMS, Azure
+                     Monitor, Resource Graph, Activity Log, Cost Management,
+                     ACSS, Advisor). 10 skills functional, no config validation,
+                     no live VM commands.
+
+      ConfigStore  — Creates: resource group, collector UMI, storage account
+                     with sap-configs container, custom RBAC role definition.
+                     Skips the proxy (ACR, VNet, Container Apps env,
+                     Container App, Entra ID Easy Auth). 11 skills functional
+                     (adds STAF config validation and config-enriched skills).
+                     If -SreAgentUmiPrincipalId is supplied, the SRE Agent's
+                     own UMI is granted Storage Blob Data Reader on the
+                     container so the Config Validator skill can read configs
+                     directly without a proxy.
+
+      Full         — Default. Creates everything: collector UMI, storage,
+                     proxy UMI, ACR + image, VNet, Container Apps env,
+                     Container App, Entra ID Easy Auth, custom RBAC role.
+                     All 13 skills functional including live VM commands and
+                     self-healing.
 
 .PARAMETER SubscriptionId
-    Subscription where the resource group will be created.
+    Subscription where the resource group will be created. Required in all modes.
+
+.PARAMETER Mode
+    Adoption mode. One of: AzureNative, ConfigStore, Full. Default: Full.
 
 .PARAMETER StorageAccountName
     Globally unique storage account name (3-24 chars, lowercase + numbers only).
+    Required for ConfigStore and Full modes. Ignored for AzureNative.
+
+.PARAMETER SreAgentUmiPrincipalId
+    Optional. Object/Principal ID of the SRE Agent's Managed Identity (visible on
+    sre.azure.com under Identity). If supplied (recommended for ConfigStore mode),
+    the agent UMI is granted Storage Blob Data Reader on the sap-configs container
+    so the Config Validator skill can read configs directly. In Full mode this is
+    optional — without it, the agent reads configs through the proxy.
 
 .PARAMETER ResourceGroupName
-    Resource group name. Default: rg-sre-ops
+    Resource group name. Default: rg-sre-proxy
 
 .PARAMETER ProxyName
-    Container App name for the SRE proxy. Default: sap-sre-proxy
+    Container App name for the SRE proxy. Default: sap-sre-proxy. Full mode only.
 
 .PARAMETER Location
     Azure region. Default: centralus
 
 .PARAMETER VNetName
-    Virtual network name. Default: vnet-sre-ops
+    Virtual network name. Default: vnet-sre-proxy. Full mode only.
 
 .PARAMETER VNetAddressSpace
     VNet address space (CIDR). Choose a range that does not overlap with
-    existing VNets if you plan to peer them later. Default: 10.60.0.0/16
+    existing VNets if you plan to peer them later. Default: 10.60.0.0/16.
+    Full mode only.
 
 .PARAMETER SubnetName
-    Subnet name for Container Apps. Default: sn-container-apps
+    Subnet name for Container Apps. Default: sn-container-apps. Full mode only.
 
 .PARAMETER SubnetPrefix
     Subnet address prefix (CIDR, minimum /23 for Container Apps).
-    Default: 10.60.0.0/23
+    Default: 10.60.0.0/23. Full mode only.
 
 .EXAMPLE
-    # Minimal — uses all defaults:
+    # Mode 1 — Azure-Native (no infra; prints what to do manually):
+    .\deploy-sre-infra.ps1 -Mode AzureNative -SubscriptionId "12345678-..."
+
+.EXAMPLE
+    # Mode 2 — Config Store only (no proxy):
+    .\deploy-sre-infra.ps1 `
+        -Mode ConfigStore `
+        -SubscriptionId "12345678-..." `
+        -StorageAccountName "stsreconfigs001" `
+        -SreAgentUmiPrincipalId "<agent-mi-principal-id>"
+
+.EXAMPLE
+    # Mode 3 — Full (proxy + storage + everything) — DEFAULT:
     .\deploy-sre-infra.ps1 `
         -SubscriptionId "12345678-..." `
         -StorageAccountName "stsreconfigs001"
-
-.EXAMPLE
-    # Custom VNet (e.g. to avoid overlap with existing networks):
-    .\deploy-sre-infra.ps1 `
-        -SubscriptionId "12345678-..." `
-        -StorageAccountName "stsreconfigs001" `
-        -VNetAddressSpace "10.80.0.0/16" `
-        -SubnetPrefix "10.80.0.0/23"
 #>
 
 param(
     [Parameter(Mandatory)] [string] $SubscriptionId,
-    [Parameter(Mandatory)] [string] $StorageAccountName,
+    [ValidateSet('AzureNative','ConfigStore','Full')]
+    [string] $Mode              = 'Full',
+    [string] $StorageAccountName,
+    [string] $SreAgentUmiPrincipalId,
     [string] $ResourceGroupName = "rg-sre-proxy",
     [string] $ProxyName         = "sap-sre-proxy",
     [string] $Location          = "centralus",
@@ -83,14 +122,59 @@ function Write-Warn  { param($msg) Write-Host "   WARN: $msg" -ForegroundColor Y
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host " SAP SRE Agent — Infrastructure Deployment" -ForegroundColor Cyan
+Write-Host " Mode: $Mode" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "  Subscription:  $SubscriptionId"
-Write-Host "  Resource Group: $RG"
-Write-Host "  Storage:       $StorageAccountName"
-Write-Host "  SRE Proxy:     $ProxyName"
-Write-Host "  VNet:          $VNetName ($VNetAddressSpace)"
-Write-Host "  Subnet:        $SubnetName ($SubnetPrefix)"
+if ($Mode -ne 'AzureNative') {
+    Write-Host "  Resource Group: $RG"
+    Write-Host "  Storage:       $StorageAccountName"
+}
+if ($Mode -eq 'Full') {
+    Write-Host "  SRE Proxy:     $ProxyName"
+    Write-Host "  VNet:          $VNetName ($VNetAddressSpace)"
+    Write-Host "  Subnet:        $SubnetName ($SubnetPrefix)"
+}
 Write-Host "  Location:      $Location"
+
+# ===========================================================================
+# Mode 1 — Azure-Native: no infra needed. Print instructions and exit.
+# ===========================================================================
+if ($Mode -eq 'AzureNative') {
+    Write-Host ""
+    Write-Host "============================================" -ForegroundColor Green
+    Write-Host " MODE 1 (AzureNative) — No infrastructure to deploy" -ForegroundColor Green
+    Write-Host "============================================" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "In Azure-Native mode the SRE Agent uses only built-in Azure data sources:" -ForegroundColor Yellow
+    Write-Host "  - AMS (Azure Monitor for SAP Solutions) telemetry" -ForegroundColor Gray
+    Write-Host "  - Azure Monitor metrics and Activity Log" -ForegroundColor Gray
+    Write-Host "  - Azure Resource Graph + ARM API" -ForegroundColor Gray
+    Write-Host "  - Cost Management, Advisor, Resource Health, ACSS" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "There is nothing to deploy. Complete these manual steps instead:" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  1. On sre.azure.com, copy the SRE Agent Managed Identity Object ID." -ForegroundColor Yellow
+    Write-Host "  2. Grant the agent MI these built-in roles on each SAP resource group:" -ForegroundColor Yellow
+    Write-Host "       - Reader" -ForegroundColor Gray
+    Write-Host "       - Monitoring Reader" -ForegroundColor Gray
+    Write-Host "       - Cost Management Reader  (subscription scope is fine)" -ForegroundColor Gray
+    Write-Host "     Example:" -ForegroundColor Gray
+    Write-Host "       az role assignment create --assignee-object-id <agent-mi-object-id> ``" -ForegroundColor Gray
+    Write-Host "         --assignee-principal-type ServicePrincipal --role 'Monitoring Reader' ``" -ForegroundColor Gray
+    Write-Host "         --scope /subscriptions/$SubscriptionId/resourceGroups/<SAP-RG>" -ForegroundColor Gray
+    Write-Host "  3. Import the 10 Mode-1 skills (skip sap-config-validator, sap-command-runner," -ForegroundColor Yellow
+    Write-Host "     and sap-self-healing). See README.md Adoption Modes table for the full list." -ForegroundColor Yellow
+    Write-Host "  4. Paste onboarding/team-onboarding.template.md into Team Onboarding and set" -ForegroundColor Yellow
+    Write-Host "     '## Deployment Mode' to 'Mode 1 (AzureNative)'." -ForegroundColor Yellow
+    Write-Host "  5. Re-run this script with -Mode ConfigStore or -Mode Full to upgrade later." -ForegroundColor Yellow
+    Write-Host ""
+    return
+}
+
+# Validate StorageAccountName for modes that need it
+if (-not $StorageAccountName) {
+    throw "-StorageAccountName is required for -Mode $Mode. (Only -Mode AzureNative skips storage.)"
+}
 
 # ── Prerequisites ──
 Write-Step "Prerequisites"
@@ -115,24 +199,28 @@ $deployerUpn = $acct.user.name
 Write-OK "Logged in as $deployerUpn"
 
 # ── Step 1: Resource Group ──
-Write-Step "Step 1/8 — Resource Group"
+Write-Step "Step 1 — Resource Group"
 az group create --name $RG --location $Location --output none
 if ($LASTEXITCODE -ne 0) { throw "Failed to create resource group $RG" }
 Write-OK "$RG ($Location)"
 
 # ── Step 2: Managed Identities ──
-Write-Step "Step 2/10 — Managed Identities"
+Write-Step "Step 2 — Managed Identities"
 
-# Proxy UMI — used by Container App for ARM API calls and blob access
-az identity create --name $ProxyUmiName -g $RG --location $Location --output none 2>$null
-$proxyUmiJson = az identity show -n $ProxyUmiName -g $RG -o json | ConvertFrom-Json
-$PROXY_UMI_ID = $proxyUmiJson.id
-$PROXY_UMI_CLIENT_ID = $proxyUmiJson.clientId
-$PROXY_UMI_PRINCIPAL_ID = $proxyUmiJson.principalId
-if (-not $PROXY_UMI_CLIENT_ID) { throw "Failed to create proxy managed identity" }
-Write-OK "$ProxyUmiName (Client: $PROXY_UMI_CLIENT_ID)"
+# Proxy UMI — used by Container App for ARM API calls and blob access (Full mode only)
+if ($Mode -eq 'Full') {
+    az identity create --name $ProxyUmiName -g $RG --location $Location --output none 2>$null
+    $proxyUmiJson = az identity show -n $ProxyUmiName -g $RG -o json | ConvertFrom-Json
+    $PROXY_UMI_ID = $proxyUmiJson.id
+    $PROXY_UMI_CLIENT_ID = $proxyUmiJson.clientId
+    $PROXY_UMI_PRINCIPAL_ID = $proxyUmiJson.principalId
+    if (-not $PROXY_UMI_CLIENT_ID) { throw "Failed to create proxy managed identity" }
+    Write-OK "$ProxyUmiName (Client: $PROXY_UMI_CLIENT_ID)"
+} else {
+    Write-OK "Skipping proxy UMI (Mode=$Mode)"
+}
 
-# Collector UMI — assigned to SAP VMs for config upload to blob storage
+# Collector UMI — assigned to SAP VMs for config upload to blob storage (both ConfigStore and Full)
 az identity create --name $CollectorUmiName -g $RG --location $Location --output none 2>$null
 $collectorUmiJson = az identity show -n $CollectorUmiName -g $RG -o json | ConvertFrom-Json
 $COLLECTOR_UMI_ID = $collectorUmiJson.id
@@ -142,7 +230,7 @@ if (-not $COLLECTOR_UMI_CLIENT_ID) { throw "Failed to create collector managed i
 Write-OK "$CollectorUmiName (Client: $COLLECTOR_UMI_CLIENT_ID)"
 
 # ── Step 3: Storage Account ──
-Write-Step "Step 3/10 — Storage Account"
+Write-Step "Step 3 — Storage Account"
 
 az storage account create --name $StorageAccountName -g $RG -l $Location `
     --sku Standard_LRS --kind StorageV2 --min-tls-version TLS1_2 `
@@ -158,18 +246,39 @@ if ($deployerIp) {
     Write-OK "Deployer IP ($deployerIp) added to firewall (temporary)"
 }
 
-# Assign storage RBAC to proxy UMI (read/write configs)
 $stScope = "/subscriptions/$SubscriptionId/resourceGroups/$RG/providers/Microsoft.Storage/storageAccounts/$StorageAccountName"
-foreach ($role in @("Storage Blob Data Owner", "Storage Blob Data Contributor")) {
-    az role assignment create --assignee-object-id $PROXY_UMI_PRINCIPAL_ID --assignee-principal-type ServicePrincipal `
-        --role $role --scope $stScope --output none 2>$null
+
+# Assign storage RBAC to proxy UMI (read/write configs) — Full mode only
+if ($Mode -eq 'Full') {
+    foreach ($role in @("Storage Blob Data Owner", "Storage Blob Data Contributor")) {
+        az role assignment create --assignee-object-id $PROXY_UMI_PRINCIPAL_ID --assignee-principal-type ServicePrincipal `
+            --role $role --scope $stScope --output none 2>$null
+    }
+    Write-OK "Proxy UMI storage roles assigned"
 }
-Write-OK "Proxy UMI storage roles assigned"
 
 # Assign storage RBAC to collector UMI (upload configs from SAP VMs)
 az role assignment create --assignee-object-id $COLLECTOR_UMI_PRINCIPAL_ID --assignee-principal-type ServicePrincipal `
     --role "Storage Blob Data Contributor" --scope $stScope --output none 2>$null
 Write-OK "Collector UMI storage role assigned"
+
+# Optionally grant the SRE Agent UMI direct Storage Blob Data Reader (required for Mode 2,
+# optional for Mode 3 — lets Config Validator skill read configs without going through the proxy)
+if ($SreAgentUmiPrincipalId) {
+    az role assignment create --assignee-object-id $SreAgentUmiPrincipalId --assignee-principal-type ServicePrincipal `
+        --role "Storage Blob Data Reader" --scope $stScope --output none 2>$null
+    Write-OK "SRE Agent UMI granted Storage Blob Data Reader (direct config access)"
+} else {
+    if ($Mode -eq 'ConfigStore') {
+        Write-Warn "-SreAgentUmiPrincipalId not provided. In Mode 2 the Config Validator skill"
+        Write-Warn "  needs Storage Blob Data Reader on the sap-configs container. Either re-run"
+        Write-Warn "  this script with -SreAgentUmiPrincipalId <agent-mi-object-id>, or assign"
+        Write-Warn "  the role manually:"
+        Write-Host "     az role assignment create --assignee-object-id <agent-mi> ``" -ForegroundColor Gray
+        Write-Host "       --assignee-principal-type ServicePrincipal ``" -ForegroundColor Gray
+        Write-Host "       --role 'Storage Blob Data Reader' --scope $stScope" -ForegroundColor Gray
+    }
+}
 
 # Assign deployer blob access
 az role assignment create --assignee $deployerUpn --role "Storage Blob Data Owner" --scope $stScope --output none
@@ -200,8 +309,20 @@ if (Test-Path $CollectorScript) {
     else { Write-Warn "Collector upload deferred — run after RBAC propagates" }
 }
 
+# ===========================================================================
+# Mode 3 — Full: proceed with proxy stack (ACR, VNet, Container Apps, Auth)
+# Mode 2 — ConfigStore: skip Steps 4–8, jump to custom RBAC + summary
+# ===========================================================================
+if ($Mode -eq 'ConfigStore') {
+    Write-Step "Skipping Steps 4–8 (proxy infrastructure) — Mode=ConfigStore"
+    Write-Host "   Mode 2 does not deploy ACR, VNet, Container Apps env, Container App, or Entra ID." -ForegroundColor Gray
+    Write-Host "   The Config Validator skill reads configs directly from blob via the SRE Agent UMI." -ForegroundColor Gray
+}
+
+if ($Mode -eq 'Full') {
+
 # ── Step 4: Container Registry ──
-Write-Step "Step 4/8 — Container Registry"
+Write-Step "Step 4 — Container Registry"
 # Premium SKU required for private endpoint support in MCAP
 az acr create --name $AcrName -g $RG -l $Location --sku Premium --admin-enabled false --output none 2>$null
 if ($LASTEXITCODE -ne 0) { throw "Failed to create ACR '$AcrName'. Name may already be taken." }
@@ -226,7 +347,7 @@ if ($LASTEXITCODE -ne 0) { throw "Failed to build container image" }
 Write-OK "Image built: $AcrName.azurecr.io/sre-proxy:latest"
 
 # ── Step 5: VNet + Subnet ──
-Write-Step "Step 5/8 — VNet + Subnet"
+Write-Step "Step 5 — VNet + Subnet"
 az network vnet create -n $VNetName -g $RG -l $Location `
     --address-prefix $VNetAddressSpace `
     --subnet-name $SubnetName --subnet-prefix $SubnetPrefix `
@@ -259,7 +380,7 @@ if ($SapSubnetIds.Count -gt 0) {
 }
 
 # ── Step 6: Container Apps Environment ──
-Write-Step "Step 6/10 — Container Apps Environment"
+Write-Step "Step 6 — Container Apps Environment"
 az containerapp env create --name $EnvName -g $RG -l $Location `
     --infrastructure-subnet-resource-id $subnetId `
     --output none 2>$null
@@ -267,7 +388,7 @@ if ($LASTEXITCODE -ne 0) { throw "Failed to create Container Apps Environment" }
 Write-OK "$EnvName (VNet-integrated)"
 
 # ── Step 7: Container App ──
-Write-Step "Step 7/8 — Deploy Container App"
+Write-Step "Step 7 — Deploy Container App"
 $API_KEY = [guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N").Substring(0,16)
 
 az containerapp create --name $ProxyName -g $RG `
@@ -292,7 +413,7 @@ $fqdn = az containerapp show -n $ProxyName -g $RG --query "properties.configurat
 Write-OK "$ProxyName deployed (https://$fqdn)"
 
 # ── Step 8: Entra ID Authentication ──
-Write-Step "Step 8/10 — Entra ID Authentication"
+Write-Step "Step 8 — Entra ID Authentication"
 
 # Get tenant ID
 $tenantId = az account show --query tenantId -o tsv
@@ -330,8 +451,11 @@ Write-OK "Entra ID authentication enabled (unauthenticated requests return 401)"
 Write-Host "   SRE Agent MI must acquire a token for audience: api://sap-sre-proxy-$($SubscriptionId.Substring(0,8))" -ForegroundColor Gray
 Write-Host "   Health endpoint (/api/health) is excluded from auth for probes" -ForegroundColor Gray
 
-# ── Step 9: Custom RBAC Role ──
-Write-Step "Step 9/10 — Custom RBAC Role"
+} # end if ($Mode -eq 'Full')
+
+# ── Step 9: Custom RBAC Role (Mode 3 only — proxy needs it) ──
+if ($Mode -eq 'Full') {
+Write-Step "Step 9 — Custom RBAC Role"
 
 $roleName = "Custom - SAP SRE Agent Operator"
 $existingRole = az role definition list --name $roleName --query "[0].id" -o tsv 2>$null
@@ -353,37 +477,70 @@ if ($existingRole) {
         Write-Warn "Role definition file not found: $roleFile"
     }
 }
+} # end if ($Mode -eq 'Full') for Step 9
 
 # ── Step 10: Summary ──
-Write-Step "Step 10/10 — Complete"
+Write-Step "Step 10 — Complete"
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Green
-Write-Host " DEPLOYMENT COMPLETE" -ForegroundColor Green
+Write-Host " DEPLOYMENT COMPLETE — Mode: $Mode" -ForegroundColor Green
 Write-Host "============================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "  SRE Proxy:          https://$fqdn"
-Write-Host "  API Key:            $API_KEY"
-Write-Host "  Proxy UMI:          $ProxyUmiName (Client: $PROXY_UMI_CLIENT_ID, Principal: $PROXY_UMI_PRINCIPAL_ID)"
+
+if ($Mode -eq 'Full') {
+    Write-Host "  SRE Proxy:          https://$fqdn"
+    Write-Host "  API Key:            $API_KEY"
+    Write-Host "  Proxy App ID:       $ProxyAppId  (Entra ID Easy Auth audience: api://sap-sre-proxy-$($SubscriptionId.Substring(0,8)))"
+    Write-Host "  Proxy UMI:          $ProxyUmiName (Client: $PROXY_UMI_CLIENT_ID, Principal: $PROXY_UMI_PRINCIPAL_ID)"
+    Write-Host "  VNet:               $VNetName ($VNetAddressSpace)"
+    Write-Host "  Custom RBAC:        $roleName"
+}
 Write-Host "  Collector UMI:      $CollectorUmiName (Client: $COLLECTOR_UMI_CLIENT_ID, Resource: $COLLECTOR_UMI_ID)"
 Write-Host "  Storage:            $StorageAccountName"
-Write-Host "  VNet:               $VNetName ($VNetAddressSpace)"
-Write-Host "  Custom RBAC:        $roleName"
+if ($SreAgentUmiPrincipalId) {
+    Write-Host "  Agent UMI direct:   $SreAgentUmiPrincipalId (Storage Blob Data Reader — direct config access)"
+}
 Write-Host ""
+
 Write-Host "Next Steps:" -ForegroundColor Yellow
-Write-Host "  1. Grant proxy UMI access to SAP resource groups:" -ForegroundColor Yellow
-Write-Host "     az role assignment create --assignee-object-id $PROXY_UMI_PRINCIPAL_ID --assignee-principal-type ServicePrincipal --role `"$roleName`" --scope /subscriptions/$SubscriptionId/resourceGroups/<SAP-RG>" -ForegroundColor Gray
-Write-Host ""
-Write-Host "  2. Assign collector UMI to SAP VMs:" -ForegroundColor Yellow
-Write-Host "     az vm identity assign -g <SAP-RG> -n <VM-NAME> --identities $COLLECTOR_UMI_ID" -ForegroundColor Gray
-Write-Host ""
-Write-Host "  3. Deploy collector to SAP VMs via proxy:" -ForegroundColor Yellow
-Write-Host "     POST $fqdn/api/command with command_id=deploy_collector, storage_account=$StorageAccountName, umi_client_id=$COLLECTOR_UMI_CLIENT_ID" -ForegroundColor Gray
-Write-Host ""
-Write-Host "  4. SRE Agent portal (sre.azure.com):" -ForegroundColor Yellow
-Write-Host "     - Import skills via Skill Builder" -ForegroundColor Yellow
-Write-Host "     - Add managed resources (SAP RGs + rg-sre-proxy)" -ForegroundColor Yellow
-Write-Host "     - Upload sap-landscape-inventory.json as Knowledge Source" -ForegroundColor Yellow
-Write-Host "     - Paste team onboarding with proxy URL + API key" -ForegroundColor Yellow
+if ($Mode -eq 'Full') {
+    Write-Host "  1. Grant proxy UMI access to SAP resource groups:" -ForegroundColor Yellow
+    Write-Host "     az role assignment create --assignee-object-id $PROXY_UMI_PRINCIPAL_ID --assignee-principal-type ServicePrincipal --role `"$roleName`" --scope /subscriptions/$SubscriptionId/resourceGroups/<SAP-RG>" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  2. Assign collector UMI to SAP VMs:" -ForegroundColor Yellow
+    Write-Host "     az vm identity assign -g <SAP-RG> -n <VM-NAME> --identities $COLLECTOR_UMI_ID" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  3. Deploy collector to SAP VMs via proxy:" -ForegroundColor Yellow
+    Write-Host "     POST $fqdn/api/command with command_id=deploy_collector, storage_account=$StorageAccountName, umi_client_id=$COLLECTOR_UMI_CLIENT_ID" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  4. SRE Agent portal (sre.azure.com):" -ForegroundColor Yellow
+    Write-Host "     - Import all 13 skills via Skill Builder" -ForegroundColor Yellow
+    Write-Host "     - Add managed resources (SAP RGs + $RG)" -ForegroundColor Yellow
+    Write-Host "     - Upload sap-landscape-inventory.json as Knowledge Source" -ForegroundColor Yellow
+    Write-Host "     - Paste team onboarding with proxy URL + API key + Mode 3 declaration" -ForegroundColor Yellow
+} else {
+    # ConfigStore (Mode 2)
+    Write-Host "  1. Assign collector UMI to SAP VMs:" -ForegroundColor Yellow
+    Write-Host "     az vm identity assign -g <SAP-RG> -n <VM-NAME> --identities $COLLECTOR_UMI_ID" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  2. Deploy collector script to each SAP VM (use az vm run-command or your config-mgmt tool):" -ForegroundColor Yellow
+    Write-Host "     The collector script is at collector/collect-sap-configs.sh and uploaded to" -ForegroundColor Gray
+    Write-Host "     blob: $StorageAccountName/$Container/scripts/collect-sap-configs.sh" -ForegroundColor Gray
+    Write-Host ""
+    if (-not $SreAgentUmiPrincipalId) {
+        Write-Host "  3. Grant SRE Agent UMI Storage Blob Data Reader (required for Config Validator):" -ForegroundColor Yellow
+        Write-Host "     az role assignment create --assignee-object-id <agent-mi-object-id> --assignee-principal-type ServicePrincipal --role 'Storage Blob Data Reader' --scope $stScope" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "  4. SRE Agent portal (sre.azure.com):" -ForegroundColor Yellow
+    } else {
+        Write-Host "  3. SRE Agent portal (sre.azure.com):" -ForegroundColor Yellow
+    }
+    Write-Host "     - Grant agent MI 'Reader' + 'Monitoring Reader' on each SAP RG" -ForegroundColor Yellow
+    Write-Host "     - Import 11 skills (skip sap-command-runner and sap-self-healing — Mode 3 only)" -ForegroundColor Yellow
+    Write-Host "     - Add managed resources (SAP RGs + $RG)" -ForegroundColor Yellow
+    Write-Host "     - Upload sap-landscape-inventory.json as Knowledge Source" -ForegroundColor Yellow
+    Write-Host "     - Paste team onboarding with Mode 2 declaration + storage account name" -ForegroundColor Yellow
+}
 Write-Host ""
 
 # Clean up deployer IP from storage firewall
