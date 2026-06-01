@@ -22,6 +22,14 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 **Proxy Fallback**: If the config proxy or command proxy returns an error (timeout, 5xx, unreachable), inform the user and continue with Azure-native data sources only (AMS, ARM API, Azure Monitor). Do not block the entire skill on a proxy failure.
 
+## Mode Requirements
+
+This skill operates in **all three deployment modes** with progressively richer evidence. Check the `## Deployment Mode` block at the top of the Team Onboarding context to know which mode is active and gate behavior accordingly.
+
+- **Mode 1 (Azure-Native)** — Diagnosis is limited to AMS telemetry + Azure Monitor metrics (CPU/memory/disk IOPS, AMS HANA service stats, AMS savepoint duration). No HANA config inspection, no live SQL. You can identify "HANA service X consuming most memory" from AMS but cannot inspect `global.ini` thresholds or run `M_EXPENSIVE_STATEMENTS` against the system. **Always disclose in the report header**: "Running in Mode 1 (Azure-Native) — HANA config and live SQL evidence are unavailable. Enable Mode 2 for `global.ini` / `indexserver.ini` inspection and Mode 3 for live `hdbsql`."
+- **Mode 2 (Config Store)** — All of Mode 1 + reads `global.ini`, `indexserver.ini`, `sysctl`, and other collected HANA / OS configs from the `sap-configs` blob container. Can show "your `statement_memory_limit` is set to X" alongside "the offending statement allocated Y".
+- **Mode 3 (Full Proxy)** — All of Mode 2 + can run live `hdbsql` against the system (`M_LOAD_HISTORY_HOST`, `M_EXPENSIVE_STATEMENTS`, `M_HEAP_MEMORY`) through the command proxy for the freshest evidence.
+
 ## When to Use
 
 - "Why is SAP slow on AB1?"

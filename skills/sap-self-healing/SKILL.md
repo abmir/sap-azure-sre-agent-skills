@@ -21,6 +21,13 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 **Proxy Fallback**: If the config proxy or command proxy returns an error (timeout, 5xx, unreachable), inform the user and continue with Azure-native data sources only (AMS, ARM API, Azure Monitor). Do not block the entire skill on a proxy failure.
 
+## Mode Requirements
+
+This skill **requires Mode 3 (Full Proxy)** for any remediation action. Detection-only behavior is allowed in lower modes but the skill cannot autonomously fix anything without the proxy. Check the `## Deployment Mode` block at the top of the Team Onboarding context.
+
+- **Mode 1 (Azure-Native)** or **Mode 2 (Config Store)** — Respond exactly: "Automated self-healing requires Mode 3 (Full Proxy). Your environment is in Mode {1|2}, so the command proxy is not deployed. I can DETECT issues from AMS / Activity Log / Azure Monitor in any mode but cannot REMEDIATE them without the proxy. Run `infra/deploy-sre-infra.ps1 -Mode Full` to enable remediation. Until then, this skill will not auto-act — only alert." Then stop. Do NOT attempt to invoke any proxy URL.
+- **Mode 3 (Full Proxy)** — Run the full flow below. T4 guardrails apply (allowlist, rate limit, kill switch).
+
 ## Tier: T4 — Autonomous Remediation
 
 ## Guardrails
