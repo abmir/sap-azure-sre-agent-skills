@@ -4,6 +4,42 @@ AI-powered SRE agent for SAP HANA and NetWeaver on Azure. Automates health monit
 
 **Three adoption modes** — pick what fits your security posture. Start with zero-infrastructure Azure-native telemetry, add a customer-controlled config store when you want STAF compliance, add a brokered command proxy when you're ready for live remediation. See [Adoption Modes](#adoption-modes) below.
 
+## Architecture
+
+![Azure SRE Agent for SAP Workloads — architecture](docs/sap-on-azure-sre-agent.png)
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ Azure SRE Agent (sre.azure.com)                          │
+│  13 Custom Skills + 39 Built-in Skills                   │
+│  Tools: ARM API, AMS KQL, Azure Monitor, CLI, Python     │
+│  Knowledge: SAP landscape, SAP Notes, STAF references    │
+└──────────┬────────────────┬────────────────┬─────────────┘
+           │ Mode 1         │ Mode 2         │ Mode 3
+           │ (always on)    │ (config-aware) │ (live ops)
+           ▼                ▼                ▼
+   ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐
+   │ Azure APIs  │  │ Config Store │  │ SRE Proxy        │
+   │ + AMS / LAW │  │ (Storage)    │  │ (Container App)  │
+   │ ARM, Cost   │  │ sap-configs/ │  │ /api/command     │
+   │ Monitor,    │  │   SID/host/  │  │ /api/batch       │
+   │ Advisor     │  │   latest/    │  │ 14-cmd allowlist │
+   │             │  │ Agent UMI:   │  │ Entra ID + API   │
+   │             │  │ Blob Reader  │  │ proxy-umi        │
+   └─────────────┘  └──────┬───────┘  └────────┬─────────┘
+                           │ upload            │ ARM
+                           │ (weekly cron +    │ run-command
+                           │  on-demand)       │ (read-only)
+                           ▼                   ▼
+                   ┌────────────────────────────────────┐
+                   │ SAP VMs                            │
+                   │  /opt/sre/collect-sap-configs.sh   │
+                   │  collector-umi (Blob Contributor)  │
+                   └────────────────────────────────────┘
+```
+
+STAF check definitions live in the public [`Azure/sap-automation-qa`](https://github.com/Azure/sap-automation-qa) repo and are pulled live by the Config Validator skill (Mode 2+) — they are not hosted by Microsoft inside this stack.
+
 ## What It Does
 
 | Capability | Example Prompt | Min. Mode | How It Works |
@@ -65,42 +101,6 @@ How each of the 13 custom skills behaves under each mode. **Full** = skill opera
 | 13 | `sap-self-healing` | ❌ Blocked | ❌ Blocked | ✅ Full | Inherently Mode 3 — needs the proxy to execute remediation |
 
 **Net skill counts per mode**: Mode 1 = 6 full + 4 degraded = 10 working skills. Mode 2 = 11 full + 2 blocked. Mode 3 = 13 full.
-
-## Architecture
-
-![Azure SRE Agent for SAP Workloads — architecture](docs/sap-on-azure-sre-agent.png)
-
-```
-┌──────────────────────────────────────────────────────────┐
-│ Azure SRE Agent (sre.azure.com)                          │
-│  13 Custom Skills + 39 Built-in Skills                   │
-│  Tools: ARM API, AMS KQL, Azure Monitor, CLI, Python     │
-│  Knowledge: SAP landscape, SAP Notes, STAF references    │
-└──────────┬────────────────┬────────────────┬─────────────┘
-           │ Mode 1         │ Mode 2         │ Mode 3
-           │ (always on)    │ (config-aware) │ (live ops)
-           ▼                ▼                ▼
-   ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐
-   │ Azure APIs  │  │ Config Store │  │ SRE Proxy        │
-   │ + AMS / LAW │  │ (Storage)    │  │ (Container App)  │
-   │ ARM, Cost   │  │ sap-configs/ │  │ /api/command     │
-   │ Monitor,    │  │   SID/host/  │  │ /api/batch       │
-   │ Advisor     │  │   latest/    │  │ 14-cmd allowlist │
-   │             │  │ Agent UMI:   │  │ Entra ID + API   │
-   │             │  │ Blob Reader  │  │ proxy-umi        │
-   └─────────────┘  └──────┬───────┘  └────────┬─────────┘
-                           │ upload            │ ARM
-                           │ (weekly cron +    │ run-command
-                           │  on-demand)       │ (read-only)
-                           ▼                   ▼
-                   ┌────────────────────────────────────┐
-                   │ SAP VMs                            │
-                   │  /opt/sre/collect-sap-configs.sh   │
-                   │  collector-umi (Blob Contributor)  │
-                   └────────────────────────────────────┘
-```
-
-STAF check definitions live in the public [`Azure/sap-automation-qa`](https://github.com/Azure/sap-automation-qa) repo and are pulled live by the Config Validator skill (Mode 2+) — they are not hosted by Microsoft inside this stack.
 
 ## Repository Layout
 
