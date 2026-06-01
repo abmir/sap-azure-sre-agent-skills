@@ -11,12 +11,12 @@ All environment-specific values (proxy URL, API key, SAP landscape) are provided
 
 **Data Reuse (AAU Optimization)**: If the same command was already run on this VM earlier in this conversation, return the cached result instead of re-executing. Only re-execute if the user explicitly asks to refresh or re-run.
 
-## Mode Requirements
+## Infrastructure Requirements
 
-This skill **requires Mode 3 (Full Proxy)**. Check the `## Deployment Mode` block at the top of the Team Onboarding context.
+This skill **requires an SRE Proxy** in the `## Deployed Infrastructure` section of Team Onboarding.
 
-- **Mode 1 (Azure-Native)** or **Mode 2 (Config Store)** — Respond exactly: "Live VM commands require Mode 3 (Full Proxy). Your environment is in Mode {1|2}, so the command proxy is not deployed. Run `infra/deploy-sre-infra.ps1 -Mode Full` to deploy the proxy, then re-paste team onboarding with the proxy URL and API key. Until then, this skill is unavailable." Then stop. Do NOT attempt to call any proxy URL.
-- **Mode 3 (Full Proxy)** — Run the full flow below. Requires `command_proxy_url` and `command_proxy_api_key` in Team Onboarding.
+- **If no SRE Proxy is listed** — Respond exactly: "Live VM commands require the SRE Proxy (Container App). No SRE Proxy is listed in Deployed Infrastructure. Run `infra/deploy-sre-infra.ps1 -Mode Full` to deploy the proxy, then re-paste team onboarding with the proxy URL and API key. Until then, this skill is unavailable." Then stop. Do NOT attempt to call any proxy URL.
+- **If SRE Proxy is listed** — Run the full flow below using the proxy URL and API key from Team Onboarding.
 
 ## When to Use
 

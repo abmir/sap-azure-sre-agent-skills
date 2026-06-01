@@ -12,13 +12,12 @@ tools:
 - "STAF checks for HSO" / "Run all configuration checks"
 - "Check OS parameters" / "Check HANA configuration"
 
-## Mode Requirements
+## Infrastructure Requirements
 
-This skill **requires Mode 2 (Config Store) or Mode 3 (Full Proxy)**. Check the `## Deployment Mode` block at the top of the Team Onboarding context.
+This skill **requires a Storage Account** in the `## Deployed Infrastructure` section of Team Onboarding.
 
-- **Mode 1 (Azure-Native)** — Respond exactly: "Config validation requires Mode 2 or Mode 3 (the `sap-configs` storage account must be deployed and the agent MI must have `Storage Blob Data Reader` on it). Your environment is in Mode 1 (Azure-Native). Run `infra/deploy-sre-infra.ps1 -Mode ConfigStore -SreAgentUmiPrincipalId <agent-mi-id>` to enable this skill." Then **stop**. Do NOT attempt to fetch STAF or list blobs.
-- **Mode 2 (Config Store)** — Run the flow below. Configs are read from blob using the **SRE Agent's own Managed Identity** (built into `RunAzCliReadCommands` — `--auth-mode login`).
-- **Mode 3 (Full Proxy)** — Same flow as Mode 2. The agent MI reads configs directly from blob — there is no need to go through the proxy for this skill.
+- **If no Storage Account is listed** — Respond exactly: "Config validation requires a Storage Account with collected SAP configs (the `sap-configs` container must exist and the agent MI must have `Storage Blob Data Reader` on it). No Storage Account is listed in Deployed Infrastructure. Run `infra/deploy-sre-infra.ps1 -Mode ConfigStore` to deploy one." Then **stop**. Do NOT attempt to fetch STAF or list blobs.
+- **If Storage Account is listed** — Run the flow below. Configs are read from blob using the **SRE Agent's own Managed Identity** (built into `RunAzCliReadCommands` — `--auth-mode login`). The SRE Proxy is not needed for this skill.
 
 ## Architecture
 
@@ -423,4 +422,4 @@ Suggested format:
 
 - [SAP Testing Automation Framework (STAF)](https://github.com/Azure/sap-automation-qa)
 - [STAF Check Definitions](https://github.com/Azure/sap-automation-qa/tree/main/src/roles/configuration_checks/tasks/files)
-- README adoption modes: [README.md#adoption-modes](../../README.md#adoption-modes)
+- [README adoption modes](https://github.com/mcaps-microsoft/sap-azure-sre-agent/blob/main/README.md#adoption-modes)

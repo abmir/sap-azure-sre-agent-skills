@@ -22,13 +22,13 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 **Proxy Fallback**: If the config proxy or command proxy returns an error (timeout, 5xx, unreachable), inform the user and continue with Azure-native data sources only (AMS, ARM API, Azure Monitor). Do not block the entire skill on a proxy failure.
 
-## Mode Requirements (Deployment Mode 1 / 2 / 3)
+## Infrastructure Requirements
 
-This is the **deployment** mode (Azure-Native / Config Store / Full Proxy) — not to be confused with the operational tier modes (T1 / T3) in the `## Mode Selection` section below. Check the `## Deployment Mode` block at the top of the Team Onboarding context to know which deployment mode is active and gate behavior accordingly.
+This section covers what **deployed infrastructure** (Storage Account / SRE Proxy) enhances this skill — not to be confused with the operational tier modes (T1 / T3) in the `## Mode Selection` section below. The skill adapts automatically based on what is listed in the `## Deployed Infrastructure` section of Team Onboarding.
 
-- **Mode 1 (Azure-Native)** — Cluster state is inferred only from Internal Load Balancer backend pool health probes + AMS `Prometheus_HaClusterExporter_CL` + Activity Log (fencing = VM deallocate events). Cannot inspect `corosync.conf`, cannot see `SAPHanaSR-showAttr` output, cannot read SBD status, cannot verify SR hooks in `global.ini`. **Always disclose in the report header**: "Running in Mode 1 (Azure-Native) — cluster diagnosis is approximate (ILB probes + AMS only). Enable Mode 2 for `corosync` / SBD / SR-hook visibility and Mode 3 for live `crm_mon`."
-- **Mode 2 (Config Store)** — All of Mode 1 + reads collected `crm-status.txt`, `saphanasr-showattr.txt`, `corosync.conf`, `sbd-config.txt`, and `global.ini` from the `sap-configs` blob container. Full HSR sync state + SOK / SFAIL visibility.
-- **Mode 3 (Full Proxy)** — All of Mode 2 + can pull live `crm_mon`, live `SAPHanaSR-showAttr`, and live HSR state through the command proxy. Best fidelity for "what is happening right now" questions.
+- **No infrastructure listed** — Cluster state is inferred only from Internal Load Balancer backend pool health probes + AMS `Prometheus_HaClusterExporter_CL` + Activity Log (fencing = VM deallocate events). Cannot inspect `corosync.conf`, `SAPHanaSR-showAttr` output, SBD status, or SR hooks in `global.ini`. **Always disclose in the report header**: "Cluster diagnosis is approximate (ILB probes + AMS only). Deploy a config store for corosync / SBD / SR-hook visibility, or add the SRE Proxy for live `crm_mon`."
+- **Storage Account listed** — Also reads collected `crm-status.txt`, `saphanasr-showattr.txt`, `corosync.conf`, `sbd-config.txt`, and `global.ini` from the `sap-configs` blob container. Full HSR sync state + SOK / SFAIL visibility.
+- **SRE Proxy also listed** — Also pulls live `crm_mon`, live `SAPHanaSR-showAttr`, and live HSR state through the command proxy. Best fidelity for "what is happening right now" questions.
 
 ## Mode Selection
 

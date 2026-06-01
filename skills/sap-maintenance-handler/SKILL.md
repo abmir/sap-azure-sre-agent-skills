@@ -21,13 +21,13 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 **Proxy Fallback**: If the config proxy or command proxy returns an error (timeout, 5xx, unreachable), inform the user and continue with Azure-native data sources only (AMS, ARM API, Azure Monitor). Do not block the entire skill on a proxy failure.
 
-## Mode Requirements
+## Infrastructure Requirements
 
-This skill operates in **all three deployment modes** with progressively richer behavior. Check the `## Deployment Mode` block at the top of the Team Onboarding context to know which mode is active and gate behavior accordingly.
+This skill adapts automatically based on what infrastructure is listed in the `## Deployed Infrastructure` section of Team Onboarding.
 
-- **Mode 1 (Azure-Native)** — Can DETECT scheduled maintenance via the Scheduled Events API and Service Health, and can RECOMMEND the graceful-shutdown runbook. CANNOT execute any pre-checks or shutdown actions on the VMs. Reply with the recommended runbook and stop. **Always disclose**: "Running in Mode 1 (Azure-Native) — I can detect the maintenance event and recommend the runbook, but cannot execute it. Enable Mode 3 for autonomous handling."
-- **Mode 2 (Config Store)** — All of Mode 1 + can read collected configs from the `sap-configs` blob container to pre-validate the system is in a safe state before the maintenance window (HSR sync OK, no long-running backup pinned in `global.ini`, etc.). Still cannot execute remediation actions.
-- **Mode 3 (Full Proxy)** — All of Mode 2 + can autonomously execute the allowlisted maintenance actions (`sap_stop_graceful`, `hdb_stop`, `hdb_start`, `sap_start`) through the proxy, subject to the T4 guardrails below.
+- **No infrastructure listed** — Can DETECT scheduled maintenance via the Scheduled Events API and Service Health, and can RECOMMEND the graceful-shutdown runbook. CANNOT execute any pre-checks or shutdown actions on the VMs. Reply with the recommended runbook and stop. **Always disclose**: "Maintenance detection only — I can detect the event and recommend the runbook, but cannot execute it. Deploy the SRE Proxy to enable autonomous handling."
+- **Storage Account listed** — Also reads collected configs from the `sap-configs` blob container to pre-validate the system is in a safe state before the maintenance window (HSR sync OK, no long-running backup pinned in `global.ini`, etc.). Still cannot execute remediation actions without the proxy.
+- **SRE Proxy also listed** — Also autonomously executes the allowlisted maintenance actions (`sap_stop_graceful`, `hdb_stop`, `hdb_start`, `sap_start`) through the proxy, subject to the T4 guardrails below.
 
 ## Tier: T4 — Autonomous Remediation
 
