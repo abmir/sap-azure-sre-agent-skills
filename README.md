@@ -44,6 +44,28 @@ The agent supports three deployment modes. Each mode is a strict superset of the
 - **Mode 1 → Mode 2** — Run the deploy script with `-Mode ConfigStore -SreAgentUmiPrincipalId <agent-mi-object-id>`; assign the collector UMI to SAP VMs; deploy the collector. Import the Config Validator skill on the portal.
 - **Mode 2 → Mode 3** — Run the deploy script with `-Mode Full`; re-paste the team onboarding with the proxy URL + API key + Mode 3 declaration. Import the two remaining skills (`sap-command-runner`, `sap-self-healing`).
 
+### Skills × Modes capability matrix
+
+How each of the 13 custom skills behaves under each mode. **Full** = skill operates at its full design intent. **Degraded** = skill still answers but with reduced fidelity (clearly disclosed to the user). **Blocked** = skill refuses politely and explains the mode requirement.
+
+| # | Skill | Mode 1 | Mode 2 | Mode 3 | Notes |
+|:-:|------|:------:|:------:|:------:|------|
+| 1 | `sap-landscape-discovery` | ✅ Full | ✅ Full | ✅ Full | Pure ARM API |
+| 2 | `sap-operational-health` | ✅ Full | ✅ Full | ✅ + live | Already has graceful proxy fallback |
+| 3 | `sap-cost-analysis` | ✅ Full | ✅ Full | ✅ Full | Pure Cost Management API |
+| 4 | `sap-trend-analysis` | ✅ Full | ✅ Full | ✅ Full | Pure AMS KQL |
+| 5 | `sap-deployment-readiness` | ✅ Full | ✅ Full | ✅ Full | Pure ARM + SAP Notes |
+| 6 | `sap-resiliency-assessment` | ✅ Full | ✅ Full | ✅ Full | Pure Advisor + ACSS |
+| 7 | `sap-incident-analysis` | ⚠️ AMS-only (degraded) | ✅ + stored configs | ✅ + live OS state | Mode 2 adds sysctl / global.ini / corosync context |
+| 8 | `sap-maintenance-handler` | ⚠️ Basic (degraded) | ✅ + pre-checks | ✅ Full | Mode 2 reads collected configs for pre-flight; Mode 3 can execute the freeze sequence |
+| 9 | `sap-performance-diagnostics` | ⚠️ Metrics-only (degraded) | ✅ + HANA configs | ✅ + live HANA SQL | Mode 3 adds live `hdbsql` via proxy |
+| 10 | `sap-ha-cluster-health` | ⚠️ ILB probes only (degraded) | ✅ + corosync / SBD | ✅ + live `crm_mon` | Mode 1 can only infer cluster state from load balancer probes |
+| 11 | `sap-config-validator` | ❌ Blocked | ✅ Storage-direct (in-skill) | ✅ Storage-direct + on-demand collection | STAF YAML fetched from GitHub at runtime — no proxy required |
+| 12 | `sap-command-runner` | ❌ Blocked | ❌ Blocked | ✅ Full | Inherently Mode 3 — needs the proxy to reach VMs |
+| 13 | `sap-self-healing` | ❌ Blocked | ❌ Blocked | ✅ Full | Inherently Mode 3 — needs the proxy to execute remediation |
+
+**Net skill counts per mode**: Mode 1 = 6 full + 4 degraded = 10 working skills. Mode 2 = 11 full + 2 blocked. Mode 3 = 13 full.
+
 ## Architecture
 
 ![Azure SRE Agent for SAP Workloads — architecture](docs/sap-on-azure-sre-agent.png)
