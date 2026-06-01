@@ -412,6 +412,8 @@ Edit `skills/<name>/SKILL.md`, commit + push to your fork, then in sre.azure.com
 
 ## API Endpoints
 
+The proxy exposes only the endpoints the agent actually needs. STAF validation is **not** a proxy endpoint — the `sap-config-validator` skill fetches STAF YAML from GitHub and reads collected configs from blob entirely in-skill (no proxy round-trip).
+
 | Method | Route | Description |
 |--------|-------|-------------|
 | GET | `/api/health` | Health check (no auth) |
@@ -420,24 +422,30 @@ Edit `skills/<name>/SKILL.md`, commit + push to your fork, then in sre.azure.com
 | POST | `/api/command` | Execute one of 14 allowed commands |
 | POST | `/api/batch` | Execute up to 6 commands in one call |
 | GET | `/api/registry` | SAP system inventory (from landscape JSON) |
-| GET | `/api/validate/{sid}/{hostname}` | **Full STAF config validation** (fresh collection + comparison) |
-| GET | `/api/staf-checks` | STAF check definitions from GitHub (filtered by applicability) |
 | GET | `/api/configs/{sid}/{hostname}` | All collected config files for a VM |
 | GET | `/api/configs/{sid}` | List hosts under a SID |
 | GET | `/api/config/{sid}/{hostname}/{filepath}` | Single config file contents |
 
-### Config Validation Flow (`/api/validate`)
+### Config Validation Flow (in-skill, no proxy)
+
+The `sap-config-validator` skill performs the entire flow client-side via `ExecutePythonCode` + `RunAzCliReadCommands`:
 
 ```
-GET /api/validate/AB1/AB1vm?os_type=SLES_SAP&roles=DB,SCS,PAS&db_type=HANA
-    &storage_type=Premium_LRS&ha_type=false&ha_agent=none&rg=RG_SAP_CUS_AB1
+1. Skill calls RunAzCliReadCommands:
+     az storage blob download-batch --auth-mode login \
+       --source sap-configs --pattern "<SID>/<host>/latest/*"
+     (uses the SRE Agent's own MI — requires Storage Blob Data Reader on the storage account)
 
-1. STAF checks: GitHub live → cached blob snapshot fallback
-2. Config data: trigger collector on VM → read blob → cached fallback
-3. ARM data: query disk IOPS, NIC, PPG from Azure Resource Manager
-4. Compare: actual vs expected (string, range, list validators)
-5. Return: structured JSON report with pass/fail/not_evaluated per check
+2. Skill calls ExecutePythonCode:
+     requests.get(<github raw>) for the 9 STAF YAML files in
+       Azure/sap-automation-qa @ main/src/roles/configuration_checks/tasks/files
+     parse → filter applicability → extract actuals from collected files
+     → compare (string / range / list) → emit JSON report
+
+3. Agent presents the report to the user verbatim.
 ```
+
+This keeps the proxy focused on its one job — brokered VM command execution — and lets the Config Validator skill work in Mode 2 (no proxy deployed) as well as Mode 3.
 
 ---
 
@@ -445,7 +453,7 @@ GET /api/validate/AB1/AB1vm?os_type=SLES_SAP&roles=DB,SCS,PAS&db_type=HANA
 
 | Identity | Assigned to | Purpose | RBAC |
 |----------|------------|---------|------|
-| SRE Agent MI | SRE Agent platform | Azure API queries | Reader on SAP RGs, Log Analytics Reader on AMS LAW |
+| SRE Agent MI | SRE Agent platform | Azure API queries + direct blob reads (Mode 2+) | Reader on SAP RGs, Log Analytics Reader on AMS LAW, **Storage Blob Data Reader on the `sap-configs` storage account** (Mode 2+ only — required by `sap-config-validator` skill) |
 | sre-proxy-umi | Container App | VM commands + blob + ARM queries | Custom - SAP SRE Agent Operator on SAP RGs; Storage Blob Data Contributor on storage; AcrPull on ACR |
 | sre-collector-umi | SAP VMs | Config upload to blob | Storage Blob Data Contributor on storage |
 

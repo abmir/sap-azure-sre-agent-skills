@@ -3,4 +3,3 @@ uvicorn[standard]
 azure-identity
 azure-storage-blob
 requests
-pyyaml

@@ -1,6 +1,6 @@
 ---
 name: sap-config-validator
-description: "Validates SAP system configurations against Microsoft's SAP Testing Automation Framework (STAF). Pulls STAF check definitions live from the public Azure/sap-automation-qa GitHub repo, reads collected VM configs from the customer's sap-configs blob container, and runs the comparison entirely in-skill (no proxy involved). Requires Mode 2 or Mode 3. Read-only."
+description: "Validates SAP system configurations against Microsoft's SAP Testing Automation Framework (STAF). Pulls STAF check definitions live from the public Azure/sap-automation-qa GitHub repo, reads collected VM configs from the customer's sap-configs blob container, and runs the comparison entirely in-skill. Requires Mode 2 or Mode 3. Read-only."
 tools:
     - ExecutePythonCode
     - RunAzCliReadCommands
@@ -16,114 +16,108 @@ tools:
 
 This skill **requires Mode 2 (Config Store) or Mode 3 (Full Proxy)**. Check the `## Deployment Mode` block at the top of the Team Onboarding context.
 
-- **Mode 1 (Azure-Native)** — Respond exactly: "Config validation requires Mode 2 or Mode 3 (the `sap-configs` storage account must be deployed). Your environment is in Mode 1 (Azure-Native). Run `infra/deploy-sre-infra.ps1 -Mode ConfigStore -SreAgentUmiPrincipalId <agent-mi-id>` to enable this skill." Then stop. Do NOT attempt to fetch STAF or list blobs.
-- **Mode 2 (Config Store)** — Run the full flow below. The agent MI must have `Storage Blob Data Reader` on the storage account.
-- **Mode 3 (Full Proxy)** — Same as Mode 2. Optionally trigger a fresh on-demand collection through the proxy first (see Step 0 below) before reading configs.
+- **Mode 1 (Azure-Native)** — Respond exactly: "Config validation requires Mode 2 or Mode 3 (the `sap-configs` storage account must be deployed and the agent MI must have `Storage Blob Data Reader` on it). Your environment is in Mode 1 (Azure-Native). Run `infra/deploy-sre-infra.ps1 -Mode ConfigStore -SreAgentUmiPrincipalId <agent-mi-id>` to enable this skill." Then **stop**. Do NOT attempt to fetch STAF or list blobs.
+- **Mode 2 (Config Store)** — Run the flow below. Configs are read from blob using the **SRE Agent's own Managed Identity** (built into `RunAzCliReadCommands` — `--auth-mode login`).
+- **Mode 3 (Full Proxy)** — Same flow as Mode 2. The agent MI reads configs directly from blob — there is no need to go through the proxy for this skill.
 
 ## Architecture
 
 ```
-   ┌─ STAF check definitions ────────────────────────────────┐
-   │  Azure/sap-automation-qa @ main                         │
-   │  src/roles/configuration_checks/tasks/files/*.yml       │
-   │  9 YAML files: hana, sap, virtual_machine, network,     │
-   │                ascs, app, high_availability, package,   │
-   │                db2                                      │
-   └─────────────────────────────┬───────────────────────────┘
-                                 │ requests.get  (in-skill)
-                                 ▼
-   ┌─ ExecutePythonCode (in agent sandbox) ──────────────────┐
-   │  1. Fetch all 9 STAF YAML files from GitHub             │
-   │  2. Parse YAML, dedupe by check id                      │
-   │  3. Filter by applicability (os_type, roles, db_type,   │
-   │     storage_type, ha_type, ha_agent)                    │
-   │  4. Compare actual vs expected (string/range/list)      │
-   │  5. Format compliance report                            │
-   └─────────────────────────────▲───────────────────────────┘
-                                 │ actual values
-   ┌─ RunAzCliReadCommands ──────┴───────────────────────────┐
-   │  az storage blob download                               │
-   │  --account-name <storage> --container sap-configs       │
-   │  --name <SID>/<host>/latest/<path>  --auth-mode login   │
-   │  (uses agent MI \u2192 Storage Blob Data Reader)              │
-   └─────────────────────────────────────────────────────────┘
+   STAF check definitions                Collected configs
+   (Azure/sap-automation-qa @ main)      (Azure Blob Storage)
+            │                                    │
+            │ requests.get                       │ az storage blob (--auth-mode login)
+            │ (9 YAML files)                     │ uses SRE Agent UMI
+            ▼                                    ▼
+            └────────►  ExecutePythonCode  ◄─────┘
+                              │
+                              │ parse YAML → filter applicability →
+                              │ extract actuals from collected files →
+                              │ compare against expected_output/valid_list/min/max
+                              ▼
+                       compliance report
 ```
 
-The agent does ALL the work in-skill. No proxy involved (Mode 2). No server-side STAF cache (the GitHub fetch is < 5 seconds for all 9 files).
+### Rules
 
-### CRITICAL Rules
+1. **Never invent or fabricate checks.** Every check ID, expected value, and reference must come from the STAF YAML fetched from GitHub. If GitHub is unreachable and no checks load, report the failure and stop.
+2. **Never deploy anything.** No collector deployment, no VM commands, no infrastructure changes.
+3. **Never use `az vm run-command`.** If configs are missing or stale, instruct the user to trigger the collector separately (Mode 3: ask `sap-command-runner` to run `run_collector`).
+4. **Present results exactly as computed** — do not add, remove, or modify any check result.
 
-1. **NEVER invent or fabricate checks.** Every check ID, expected value, and reference must come from the STAF YAML fetched from GitHub. If GitHub is unreachable and no checks load, report the failure and stop.
-2. **NEVER deploy anything.** No collector deployment, no VM commands, no infrastructure changes.
-3. **NEVER use `az vm run-command`.** Reading from blob is sufficient; if configs are stale, instruct the user to trigger the collector separately (via the `sap-command-runner` skill in Mode 3, or `az vm run-command` manually in Mode 2).
-4. **Present results exactly as computed** — do not add, remove, or modify check results.
-5. **STAF YAML schema**: each YAML has a top-level `checks:` list. Each check has: `id`, `name`, `description`, `category`, `severity`, `applicability` (filters), `collector_type`, `collector_args`, `validator_type`, `validator_args`, `report` (`check` or `info`), `references`. Validator types are typically `string_match`, `range_check`, `list_match`. Skip checks where `report != "check"` or `validator_type` is empty — those are data-collection only.
+### STAF YAML schema (verified against `Azure/sap-automation-qa` @ `main`)
+
+Each YAML file has a top-level `checks:` list. Each check has:
+
+- `id`, `name`, `description`, `category`, `severity`
+- `applicability` — filter keys: `os_type`, `os_version`, `role` *(singular: `DB`, `SCS`, `ERS`, `APP`, `WEB`, `PAS`)*, `database_type`, `storage_type`, `workload`, `hardware_type`, `high_availability` *(bool, or list of `scale_up`/`scale_out`)*, `high_availability_agent` *(`ISCSI` or `AFA`)*
+- `collector_type` — `command` *(shell command run on the VM)* or `azure` *(ARM API lookup — not supported by this skill, returns `not_evaluated`)*
+- `collector_args` — for `command`: `command:` *(shell string)* and `user:` *(`root` or `sidadm`)*. For `azure`: `resource_type`, `property`, optional `mount_point`
+- `validator_type` — `string`, `range`, or `list`
+- `validator_args` — `expected_output` *(string)*, `valid_list` *(list)*, `min`/`max` *(range)*
+- `report` — `check` *(compare actual vs expected — the only kind we evaluate)*, `section` *(UI heading)*, or `table` *(data-only)*
+- `references` — list of SAP Note / Microsoft docs URLs
 
 ## Execution
 
-### Step 0 (Mode 3 only, optional): Trigger Fresh Collection
+### Step 1 — Download collected configs from blob
 
-If the user wants the *very latest* config state and your Team Onboarding declares Mode 3, you may invoke the `sap-command-runner` skill with `command_id=run_collector` before Step 1. Otherwise skip — collected configs are refreshed weekly by cron, which is sufficient for most validations.
-
-### Step 1: Read collected configs from blob (Mode 2/3)
-
-Use `RunAzCliReadCommands` to list and pull config files. The values for `<storage>`, `<container>`, `<SID>`, and `<host>` come from the Team Onboarding `## Deployment Mode` and SAP Landscape sections.
+Use `RunAzCliReadCommands`. The values for `<storage>`, `<SID>`, and `<host>` come from the Team Onboarding `## Deployment Mode` and `## SAP Landscape` sections. Authentication is the agent's own Managed Identity (`--auth-mode login`) — no keys, no SAS.
 
 ```bash
-# 1a. List files (verify configs exist and are fresh)
+# 1a. Confirm fresh configs exist
 az storage blob list \
     --account-name <storage> --container-name sap-configs \
     --prefix "<SID>/<host>/latest/" --auth-mode login \
-    --query "[].{name:name, modified:properties.lastModified, size:properties.contentLength}" \
-    -o json
+    --query "[].{name:name, modified:properties.lastModified}" -o json
 
-# 1b. Download to a temp dir (one call per file you need, or use az storage blob download-batch)
+# 1b. Download all files under latest/ to a local temp dir
 az storage blob download-batch \
     --source sap-configs --pattern "<SID>/<host>/latest/*" \
     --destination /tmp/configs/<SID>/<host>/ \
     --account-name <storage> --auth-mode login
 ```
 
-If `download-batch` is not supported in your environment, fall back to a loop of `az storage blob download --name <blob-name> --file <local-path>` calls for each file returned by 1a.
+If the blob list is empty or the newest file is older than 14 days, **stop and report**:
+*"No fresh collected configs found for `<SID>/<host>` in `<storage>/sap-configs`. The collector may not be installed on this VM. Trigger collection (Mode 3: ask `sap-command-runner` to run `run_collector`; Mode 2: `az vm run-command invoke -g <RG> -n <vm> --command-id RunShellScript --scripts 'sudo /opt/sre/run-collector.sh'`) and re-run this validation."*
 
-If the blob list is empty or the latest file is older than 14 days, **stop and report**: "No fresh collected configs found for `<SID>/<host>` in `<storage>/sap-configs`. The collector may not be installed on this VM. Trigger collection (Mode 3: `sap-command-runner run_collector`; Mode 2: `az vm run-command invoke -g <RG> -n <vm> --command-id RunShellScript --scripts 'sudo /opt/sre/run-collector.sh'`) and re-run this validation."
+### Step 2 — Fetch STAF definitions and run the comparison
 
-### Step 2: Fetch STAF Definitions Live from GitHub
-
-Use `ExecutePythonCode`. This pulls all 9 STAF YAML files in parallel and runs the entire validation in one block.
+Use `ExecutePythonCode`. Set the six landscape variables at the top from the Team Onboarding inventory before running.
 
 ```python
-import json, os, re, requests, yaml
+import json, re, requests, yaml
 from pathlib import Path
 
-# ── Values from Team Onboarding landscape inventory ──
-SID          = "AB1"          # SAP System ID
-HOST         = "AB1vm"        # VM hostname
-OS_TYPE      = "SLES_SAP"     # SLES_SAP | REDHAT
-ROLES        = ["DB","SCS","PAS"]  # DB,SCS,PAS,APP,ERS,WEB
-DB_TYPE      = "HANA"         # HANA | Db2
-STORAGE_TYPE = "Premium_LRS"  # Premium_LRS | UltraSSD_LRS | ANF | PremiumV2_LRS | AFS
-HA_TYPE      = "false"        # false | scale_up | scale_out
-HA_AGENT     = "none"         # none | AFA | ISCSI
+# ── Values from Team Onboarding landscape inventory ─────────────────────────
+SID          = "AB1"              # SAP System ID
+HOST         = "AB1vm"            # VM hostname
+OS_TYPE      = "SLES_SAP"         # SLES_SAP | REDHAT | OracleLinux | Windows
+ROLES        = ["DB", "SCS", "PAS"]    # DB,SCS,ERS,APP,WEB,PAS  (ASCS auto-aliased to SCS)
+DB_TYPE      = "HANA"             # HANA | Db2 | MSSQL | Oracle | ASE
+STORAGE_TYPE = "Premium_LRS"      # Premium_LRS | UltraSSD_LRS | PremiumV2_LRS | AFS | ANF | StandardSSD_LRS | Standard_LRS
+HA_TYPE      = "false"            # "false" (no HA) | "scale_up" | "scale_out"
+HA_AGENT     = "none"             # none | AFA | ISCSI
 
 CONFIG_DIR = Path(f"/tmp/configs/{SID}/{HOST}/latest")  # populated by Step 1b
 
-# ── 1. Fetch STAF check definitions from GitHub ──
+# ── 1. Fetch STAF check definitions from GitHub ─────────────────────────────
 STAF_FILES = ["hana.yml", "sap.yml", "virtual_machine.yml", "network.yml",
               "ascs.yml", "app.yml", "high_availability.yml", "package.yml", "db2.yml"]
-STAF_BASE = ("https://raw.githubusercontent.com/Azure/sap-automation-qa"
-             "/main/src/roles/configuration_checks/tasks/files")
+STAF_BASE  = ("https://raw.githubusercontent.com/Azure/sap-automation-qa"
+              "/main/src/roles/configuration_checks/tasks/files")
 
 def parse_yaml(text):
-    """Parse STAF YAML, handling enums-at-bottom anchor ordering."""
+    """STAF YAML defines its anchor enums BELOW the checks that use them.
+    PyYAML rejects forward references, so on failure we move `enums:` to the top and retry."""
     try:
         return yaml.safe_load(text)
     except yaml.YAMLError:
         m = re.search(r'^\s{0,2}enums:', text, re.MULTILINE)
-        if m:
-            pos = text.rfind('\n', 0, m.start()) + 1
-            return yaml.safe_load(text[pos:] + '\n' + text[:pos])
-        raise
+        if not m:
+            raise
+        pos = text.rfind('\n', 0, m.start()) + 1
+        return yaml.safe_load(text[pos:] + '\n' + text[:pos])
 
 all_checks, fetch_errors = [], []
 for fname in STAF_FILES:
@@ -141,191 +135,292 @@ for fname in STAF_FILES:
 
 if not all_checks:
     print(json.dumps({"error": "Failed to fetch STAF checks from GitHub",
-                       "details": fetch_errors})); raise SystemExit
+                      "details": fetch_errors})); raise SystemExit
 
-# ── 2. Filter checks by applicability ──
-# Each check may have an `applicability` block with filters.
-# Normalize ASCS role alias to STAF convention
-roles = {("SCS" if r == "ASCS" else r).upper() for r in ROLES}
+# ── 2. Filter by applicability (real STAF schema field names) ───────────────
+roles = {("SCS" if r.upper() == "ASCS" else r.upper()) for r in ROLES}
 
 def applies(chk):
     a = chk.get("applicability") or {}
-    # OS filter
-    if "os" in a and OS_TYPE not in (a["os"] if isinstance(a["os"], list) else [a["os"]]):
-        return False, "os"
-    # Role filter
-    if "roles" in a:
-        chk_roles = set(r.upper() for r in (a["roles"] if isinstance(a["roles"], list) else [a["roles"]]))
-        if not (chk_roles & roles):
+    def in_list(value, target):
+        lst = value if isinstance(value, list) else [value]
+        return target in lst
+
+    if "os_type"      in a and a["os_type"]      and not in_list(a["os_type"], OS_TYPE):           return False, "os_type"
+    if "database_type" in a and a["database_type"] and not in_list(a["database_type"], DB_TYPE):    return False, "database_type"
+    if "storage_type" in a and a["storage_type"] and not in_list(a["storage_type"], STORAGE_TYPE): return False, "storage_type"
+
+    if "role" in a and a["role"]:
+        rolelst = {x.upper() for x in (a["role"] if isinstance(a["role"], list) else [a["role"]])}
+        if not (rolelst & roles):
             return False, "role"
-    # DB filter
-    if "db_type" in a and DB_TYPE not in (a["db_type"] if isinstance(a["db_type"], list) else [a["db_type"]]):
-        return False, "db_type"
-    # Storage filter
-    if "storage_type" in a:
-        stg = a["storage_type"] if isinstance(a["storage_type"], list) else [a["storage_type"]]
-        if STORAGE_TYPE not in stg:
-            return False, "storage"
-    # HA filter
-    if "ha_type" in a:
-        ha = a["ha_type"] if isinstance(a["ha_type"], list) else [a["ha_type"]]
-        if HA_TYPE not in ha:
-            return False, "ha"
-    if "ha_agent" in a:
-        agent = a["ha_agent"] if isinstance(a["ha_agent"], list) else [a["ha_agent"]]
-        if HA_AGENT not in agent:
-            return False, "ha"
+
+    if "high_availability" in a and a["high_availability"] is not None:
+        v = a["high_availability"]
+        if HA_TYPE == "false":
+            if v is True or (isinstance(v, list) and v):
+                return False, "high_availability"
+        else:
+            if v is False:                              return False, "high_availability"
+            if isinstance(v, list) and HA_TYPE not in v: return False, "high_availability"
+
+    if "high_availability_agent" in a and a["high_availability_agent"] is not None:
+        if HA_AGENT == "none":
+            return False, "high_availability_agent"
+        if not in_list(a["high_availability_agent"], HA_AGENT):
+            return False, "high_availability_agent"
+
     return True, None
 
-applicable, filtered = [], {"os":0, "role":0, "db_type":0, "storage":0, "ha":0}
-seen = set()
+applicable, seen, filtered = [], set(), {}
 for chk in all_checks:
     cid = chk.get("id", "")
-    if cid in seen: continue
+    if cid in seen:
+        continue
     ok, why = applies(chk)
     if ok:
         seen.add(cid); applicable.append(chk)
     elif why:
-        filtered[why] += 1
+        filtered[why] = filtered.get(why, 0) + 1
 
 evaluatable = [c for c in applicable if c.get("report") == "check" and c.get("validator_type")]
 data_only   = [c for c in applicable if c not in evaluatable]
 
-# ── 3. Compare actual (from blob configs) vs expected (from STAF) ──
-# Load the collected config files into a dict keyed by relative path
+# ── 3. Load collected config files into memory ──────────────────────────────
 configs = {}
 if CONFIG_DIR.is_dir():
     for p in CONFIG_DIR.rglob("*"):
         if p.is_file():
             try:
-                configs[str(p.relative_to(CONFIG_DIR))] = p.read_text(errors="replace")
+                configs[str(p.relative_to(CONFIG_DIR)).replace("\\", "/")] = p.read_text(errors="replace")
             except Exception:
                 pass
 
-def find_value(collector_args):
-    """Extract the actual value from configs based on the check's collector_args.
-    Common collector_types: 'sysctl', 'file_grep', 'ini_value', 'package_version', 'service_status'."""
-    # collector_args typically has: file, key, section, regex, command
-    f = (collector_args or {}).get("file", "")
-    key = (collector_args or {}).get("key", "")
-    section = (collector_args or {}).get("section", "")
-    # Try matching collected file by suffix
-    for rel, content in configs.items():
-        if f and f in rel:
-            # ini_value: look up [section] key=value
-            if section and key:
-                in_section = False
-                for ln in content.splitlines():
-                    s = ln.strip()
-                    if s == f"[{section}]": in_section = True; continue
-                    if s.startswith("[") and s.endswith("]"): in_section = False
-                    if in_section and "=" in s and s.split("=",1)[0].strip() == key:
-                        return s.split("=",1)[1].strip()
-            # sysctl-style: key = value or key=value
-            if key:
-                for ln in content.splitlines():
-                    s = ln.strip()
-                    if not s or s.startswith("#"): continue
-                    if "=" in s and s.split("=",1)[0].strip() == key:
-                        return s.split("=",1)[1].strip()
-    return None  # not found
+if not configs:
+    print(json.dumps({"error": f"No collected configs found in {CONFIG_DIR}. Run Step 1 first."}))
+    raise SystemExit
 
+# ── 4. Extract actual values for the common command patterns ────────────────
+# We only evaluate checks whose `collector_args.command` matches one of the
+# patterns below — everything else is marked `not_evaluated` with a reason.
+# This keeps the skill honest: we never compare against a value we couldn't
+# actually find in the collected data.
+def extract_actual(check):
+    if check.get("collector_type") == "azure":
+        return None, "azure_collector_not_supported_in_skill"
+
+    cmd = (check.get("collector_args") or {}).get("command", "")
+    if not cmd:
+        return None, "no_command"
+
+    # 1. sysctl: "/sbin/sysctl <param> -n"  → look up in os/sysctl-runtime.txt
+    m = re.search(r'sysctl\s+([\w.]+)', cmd)
+    if m:
+        param = m.group(1)
+        data = configs.get("os/sysctl-runtime.txt", "")
+        if not data:
+            return None, "missing:os/sysctl-runtime.txt"
+        for line in data.split("\n"):
+            if "=" in line:
+                k, _, v = line.partition("=")
+                if k.strip() == param:
+                    return v.strip(), None
+        return None, f"sysctl_param_not_found:{param}"
+
+    # 2. df -T <mount>  → filesystem type column from os/disk-usage.txt
+    m = re.search(r'df\s+-T\s+(\S+)', cmd)
+    if m:
+        mount = m.group(1)
+        data = configs.get("os/disk-usage.txt", "")
+        if not data:
+            return None, "missing:os/disk-usage.txt"
+        for line in data.strip().split("\n"):
+            parts = line.split()
+            # df -hT columns: Filesystem Type Size Used Avail Use% Mounted-on
+            if len(parts) >= 7 and parts[-1] == mount:
+                return parts[1], None
+        return None, f"mount_not_found:{mount}"
+
+    # 3. Transparent HugePages
+    if "transparent_hugepage" in cmd:
+        data = configs.get("os/thp-status.txt", "")
+        if not data:
+            return None, "missing:os/thp-status.txt"
+        m2 = re.search(r'\[(\w+)\]', data)
+        return (m2.group(1) if m2 else data.strip()), None
+
+    # 4. tuned-adm active profile
+    if "tuned-adm" in cmd:
+        data = configs.get("os/tuned-profile.txt", "")
+        return (data.strip(), None) if data else (None, "missing:os/tuned-profile.txt")
+
+    # 5. fstrim systemctl active count
+    if "fstrim" in cmd and "systemctl" in cmd:
+        data = configs.get("os/fstrim-status.txt", "")
+        if not data:
+            return None, "missing:os/fstrim-status.txt"
+        return str(sum(1 for l in data.split("\n") if "active" in l.lower())), None
+
+    # 6. free -m Swap total
+    if "free" in cmd and "Swap" in cmd:
+        data = configs.get("os/free-m.txt", "")
+        if not data:
+            return None, "missing:os/free-m.txt"
+        for line in data.split("\n"):
+            if line.strip().startswith("Swap:"):
+                parts = line.split()
+                if len(parts) >= 2:
+                    return parts[1], None
+        return None, "swap_line_not_found"
+
+    # 7. systemd DefaultTasksMax
+    if "DefaultTasksMax" in cmd:
+        data = configs.get("os/systemd-defaults.txt", "")
+        if not data:
+            return None, "missing:os/systemd-defaults.txt"
+        for line in data.split("\n"):
+            if "DefaultTasksMax" in line and "=" in line:
+                return line.split("=", 1)[1].strip(), None
+        return None, "DefaultTasksMax_not_found"
+
+    # 8. softdog module loaded
+    if "lsmod" in cmd and "softdog" in cmd:
+        data = configs.get("os/lsmod-softdog.txt", "")
+        if data is None:
+            return None, "missing:os/lsmod-softdog.txt"
+        return (data.strip() if data.strip() else "not loaded"), None
+
+    # 9. uname -r
+    if "uname" in cmd and "-r" in cmd:
+        data = configs.get("os/uname-r.txt", "")
+        return (data.strip(), None) if data else (None, "missing:os/uname-r.txt")
+
+    return None, "unsupported_command_pattern"
+
+# ── 5. Compare actual vs expected ───────────────────────────────────────────
 def compare(check, actual):
     vtype = check.get("validator_type")
     vargs = check.get("validator_args") or {}
-    expected = vargs.get("expected")
     if actual is None:
-        return "not_evaluated", "actual value not found in collected configs"
-    if vtype == "string_match":
-        return ("pass" if str(actual).strip() == str(expected).strip() else "fail",
-                f"actual={actual}, expected={expected}")
-    if vtype == "range_check":
+        return "not_evaluated", "actual value unavailable"
+    actual_s = " ".join(str(actual).strip().split())
+
+    if vtype == "string":
+        expected = " ".join(str(vargs.get("expected_output", "")).strip().split())
+        if actual_s.lower() == expected.lower():
+            return "pass", f"actual={actual_s}"
+        return "fail", f"actual={actual_s} | expected={expected}"
+
+    if vtype == "range":
         try:
-            a = float(actual); lo = vargs.get("min"); hi = vargs.get("max")
-            if (lo is not None and a < float(lo)) or (hi is not None and a > float(hi)):
-                return "fail", f"actual={actual}, expected range=[{lo},{hi}]"
-            return "pass", f"actual={actual} in [{lo},{hi}]"
+            n = float(actual_s)
         except ValueError:
-            return "not_evaluated", f"actual={actual} not numeric"
-    if vtype == "list_match":
-        exp_list = expected if isinstance(expected, list) else [expected]
-        return ("pass" if str(actual).strip() in [str(e).strip() for e in exp_list] else "fail",
-                f"actual={actual}, expected one of {exp_list}")
+            return "not_evaluated", f"actual={actual_s} not numeric"
+        lo, hi = vargs.get("min"), vargs.get("max")
+        if lo is not None and n < float(lo):
+            return "fail", f"actual={n} below min={lo}"
+        if hi is not None and n > float(hi):
+            return "fail", f"actual={n} above max={hi}"
+        return "pass", f"actual={n} in [{lo},{hi}]"
+
+    if vtype == "list":
+        valid = vargs.get("valid_list", []) or []
+        if actual_s.lower() in [str(v).strip().lower() for v in valid]:
+            return "pass", f"actual={actual_s}"
+        return "fail", f"actual={actual_s} | valid_list={valid}"
+
     return "not_evaluated", f"unknown validator_type={vtype}"
 
+# ── 6. Run every evaluatable check ──────────────────────────────────────────
 results, failures = [], []
 for chk in evaluatable:
-    actual = find_value(chk.get("collector_args"))
-    status, detail = compare(chk, actual)
-    item = {"id": chk.get("id"), "name": chk.get("name"),
-            "severity": chk.get("severity"), "status": status, "detail": detail,
-            "references": chk.get("references")}
+    actual, skip = extract_actual(chk)
+    if actual is None:
+        status, detail = "not_evaluated", skip
+    else:
+        status, detail = compare(chk, actual)
+    item = {
+        "id":         chk.get("id"),
+        "name":       chk.get("name"),
+        "severity":   chk.get("severity"),
+        "category":   chk.get("category"),
+        "status":     status,
+        "detail":     detail,
+        "references": chk.get("references"),
+    }
     results.append(item)
     if status == "fail":
         failures.append(item)
 
 summary = {
-    "pass": sum(1 for r in results if r["status"] == "pass"),
-    "fail": len(failures),
+    "pass":          sum(1 for r in results if r["status"] == "pass"),
+    "fail":          len(failures),
     "not_evaluated": sum(1 for r in results if r["status"] == "not_evaluated"),
-    "data_collection": len(data_only),
+    "data_only":     len(data_only),
 }
 
-report = {
+print(json.dumps({
     "sid": SID, "host": HOST,
     "data_sources": {
-        "staf": {"source": "github_live", "total": len(all_checks),
-                  "fetch_errors": fetch_errors or None},
+        "staf":    {"source": "github_live", "total": len(all_checks),
+                    "fetch_errors": fetch_errors or None},
         "configs": {"source": "blob", "file_count": len(configs),
-                     "dir": str(CONFIG_DIR)},
+                    "dir": str(CONFIG_DIR)},
     },
-    "staf": {"total": len(all_checks), "filtered_out": filtered,
-              "applicable": len(applicable)},
+    "staf": {
+        "total":        len(all_checks),
+        "filtered_out": filtered,
+        "applicable":   len(applicable),
+        "evaluatable":  len(evaluatable),
+    },
     "summary": summary,
     "failures": failures,
     "results": results,
-}
-print(json.dumps(report, indent=2))
+}, indent=2))
 ```
 
-### Step 3: Format and Present Results
+### Step 3 — Format and present results
 
-Use the printed JSON to produce a compliance report. Format strictly from the data — do not invent any check IDs, expected values, or references.
+Use the printed JSON to produce a compliance report. **Do not invent any check IDs, expected values, or references** — quote them verbatim from the JSON.
+
+Suggested format:
 
 ```
 <SID> — STAF Config Compliance Report
 
   Data Sources:
-    STAF checks:  GitHub live (188 total) — pulled from Azure/sap-automation-qa @ main
-    Config data:  blob /tmp/configs/<SID>/<host>/latest (58 files)
+    STAF checks:  GitHub live (<staf.total> total) — Azure/sap-automation-qa @ main
+    Config data:  blob <configs.dir> (<configs.file_count> files)
 
   Check Coverage:
-    Total STAF checks:    188
-    Filtered out:          -83 (HA: 32, Db2: 25, storage: 16, OS: 10)
-    Applicable:            105
-    ├─ Evaluated:           18 (12 pass, 6 fail)
-    ├─ Not evaluated:       56 (collector_args mapping not implemented for these check types)
-    └─ Data collection:     31 (info only, no expected value)
+    Total STAF checks:    <staf.total>
+    Filtered out:         <sum of filtered_out>  (os_type: N, role: N, ...)
+    Applicable:           <staf.applicable>
+    ├─ Evaluated:         <pass + fail>  (<pass> pass, <fail> fail)
+    ├─ Not evaluated:     <not_evaluated>  (commands this skill does not extract — see below)
+    └─ Data-only:         <data_only>  (info/section/table — no expected value)
 
   ══════════════════════════════════════
-  FAILURES (from report.failures):
+  FAILURES (list every entry from .failures verbatim):
 
-  ❌ DB-HANA-0024 vm.swappiness — actual=60, expected=10 (HIGH)
-     Ref: SAP Note 3024346
+  ❌ <id> <name> — <detail>   [<severity>]
+     Refs: <references>
   ...
 
   ══════════════════════════════════════
-  SUMMARY: 12/18 PASS, 6 FAIL
+  SUMMARY: <pass>/<evaluated> PASS, <fail> FAIL
 ```
 
-**Rules for formatting:**
+**Presentation rules:**
+
 - Show `data_sources` first so the user knows where the data came from.
-- List **all** failures from `report.failures` — do not add or remove any.
-- Show the filter breakdown so users understand why 188 became 105.
-- If `summary.not_evaluated` is high, mention that the `find_value` helper above is a deliberately minimal implementation (sysctl / ini_value style). Some STAF check types (e.g. `service_status`, `package_version`, `cluster_property`) require more specific collectors that this skill does not currently parse — those will appear as `not_evaluated` and that is expected, not a bug.
-- If `data_sources.configs.file_count == 0`, do NOT report any FAIL/PASS — instead say configs are missing and stop.
+- List **every** failure from `report.failures` — never truncate or summarize.
+- If `summary.not_evaluated` is high, explain that this skill only extracts values for nine common command patterns (sysctl, `df -T`, THP, tuned-adm, fstrim, swap, DefaultTasksMax, softdog, uname). Cluster / ANF / Azure-collector / arbitrary-command checks return `not_evaluated` with a reason — that is **expected**, not a bug.
+- If `configs.file_count == 0`, do **not** report any PASS/FAIL — say configs are missing and stop.
+- If `staf.fetch_errors` is non-empty, surface it so the user knows partial STAF data was used.
 
 ## References
+
 - [SAP Testing Automation Framework (STAF)](https://github.com/Azure/sap-automation-qa)
 - [STAF Check Definitions](https://github.com/Azure/sap-automation-qa/tree/main/src/roles/configuration_checks/tasks/files)
-- README adoption modes: [`README.md#adoption-modes`](../../README.md#adoption-modes)
+- README adoption modes: [README.md#adoption-modes](../../README.md#adoption-modes)
