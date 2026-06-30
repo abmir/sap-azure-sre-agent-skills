@@ -1,6 +1,6 @@
 ---
 name: sap-deployment-readiness
-description: "Pre-flight validation for SAP VM deployments and migrations. Checks VM SKU catalog availability, zone support, subscription quota, restrictions, and SAP/HANA certification against SAP Notes 1928533 and 2235581. No proxy required."
+description: "Pre-flight validation for SAP VM deployments and migrations. Checks VM SKU catalog availability, zone support, subscription quota, restrictions, and SAP/HANA certification against SAP Notes 1928533 and 2235581. Certified families/SKUs are fetched live from the repo's knowledge/sap-certified-vms.json (with an embedded fallback). No proxy required."
 tools:
     - ExecutePythonCode
     - RunAzCliReadCommands
@@ -96,8 +96,24 @@ def check_quota(region, family_name):
 
 ## Check 3: SAP/HANA Certification
 
+The certified SAP families and HANA SKUs are **fetched live** from the repo's single source of
+truth — [`knowledge/sap-certified-vms.json`](../../../../knowledge/sap-certified-vms.json) — so the
+cert data updates the moment a maintainer merges a new SAP Note 1928533 / 2235581 revision, with no
+plugin re-install. If the fetch fails, fall back to the embedded snapshot below.
+
+**Onboarding value (optional):** `Knowledge base raw URL` — the raw base of the customer's fork,
+e.g. `https://raw.githubusercontent.com/<org>/sap-azure-sre-agent/main`. If absent, default to the
+upstream `mcaps-microsoft/sap-azure-sre-agent` on `main`.
+
 ```python
-SAP_CERTIFIED_FAMILIES = [
+import requests
+
+# Raw base of the connected repo. Read "Knowledge base raw URL" from Team Onboarding if provided.
+KB_RAW_BASE = ONBOARDING.get("knowledge_base_raw_url",
+    "https://raw.githubusercontent.com/mcaps-microsoft/sap-azure-sre-agent/main")
+
+# Embedded fallback snapshot — used ONLY if the live fetch fails. Keep in sync with the repo file.
+SAP_CERTIFIED_FAMILIES_FALLBACK = [
     "standardMSFamily", "standardMSv2Family", "standardMDSv2MedMemFamily",
     "standardMBSv3Family", "standardMSv3MedMemFamily",
     "standardESv3Family", "standardEDSv4Family", "standardEDSv5Family",
@@ -105,8 +121,7 @@ SAP_CERTIFIED_FAMILIES = [
     "standardDSv3Family", "standardDDSv4Family", "standardDDSv5Family",
     "standardDASv4Family", "standardDASv5Family",
 ]
-
-HANA_CERTIFIED_SKUS = [
+HANA_CERTIFIED_SKUS_FALLBACK = [
     "Standard_M32ts", "Standard_M32ls", "Standard_M64ls", "Standard_M64s",
     "Standard_M64ms", "Standard_M128s", "Standard_M128ms",
     "Standard_M208s_v2", "Standard_M208ms_v2",
@@ -119,6 +134,25 @@ HANA_CERTIFIED_SKUS = [
     "Standard_E16bds_v5", "Standard_E32bds_v5", "Standard_E48bds_v5",
     "Standard_E64bds_v5", "Standard_E96bds_v5",
 ]
+
+def load_certification():
+    """Fetch the live cert reference from the repo; fall back to the embedded snapshot."""
+    try:
+        r = requests.get(f"{KB_RAW_BASE}/knowledge/sap-certified-vms.json", timeout=30)
+        if r.status_code == 200:
+            data = r.json()
+            fams = data.get("sap_certified_families") or []
+            skus = data.get("hana_certified_skus") or []
+            if fams and skus:
+                ver = data.get("_metadata", {}).get("version", "unknown")
+                return fams, skus, f"github_live (knowledge/sap-certified-vms.json @ {ver})"
+    except Exception as e:
+        print(f"cert fetch failed, using embedded fallback: {e}")
+    return (SAP_CERTIFIED_FAMILIES_FALLBACK, HANA_CERTIFIED_SKUS_FALLBACK,
+            "embedded_fallback (live fetch unavailable)")
+
+SAP_CERTIFIED_FAMILIES, HANA_CERTIFIED_SKUS, CERT_SOURCE = load_certification()
+# Surface CERT_SOURCE in the report so the user knows whether cert data was live or fallback.
 ```
 
 ## Output Format
@@ -129,3 +163,4 @@ Structured go/no-go report:
 - SAP certified: YES/NO
 - HANA certified: YES/NO
 - Capabilities: AccelNet, PremiumStorage, etc.
+- Cert data source: value of `CERT_SOURCE` (`github_live ...` or `embedded_fallback ...`) so the user knows whether the certification check used the live repo reference or the embedded snapshot.

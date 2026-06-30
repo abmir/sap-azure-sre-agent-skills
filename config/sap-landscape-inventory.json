@@ -1,4 +1,5 @@
 {
+  "_note": "EXAMPLE filled inventory (Abbas AB1 lab). This is a SAMPLE — replace the systems below with your own, or delete this file. The blank template to start from is sap-landscape-inventory.template.json.",
   "environment": "SAP-Lab",
   "subscription_id": "40050ff9-81f0-4654-9bd4-34551fe455df",
   "storage_account": "stsreconfigs004",

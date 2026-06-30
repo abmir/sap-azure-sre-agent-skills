@@ -1,0 +1,27 @@
+{
+  "name": "sap-azure-sre-agent",
+  "owner": {
+    "name": "mcaps-microsoft"
+  },
+  "metadata": {
+    "description": "SAP on Azure SRE Agent — tiered skill plugins for SAP HANA and NetWeaver operations, monitoring, root-cause analysis, and STAF configuration compliance.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "sap-sre-core",
+      "description": "10 Azure-native SAP SRE skills (landscape discovery, operational health, cost analysis, trend analysis, resiliency assessment, deployment readiness, incident RCA, performance diagnostics, HA cluster health, maintenance handler). No extra infrastructure — uses Azure APIs and AMS telemetry only.",
+      "source": "./plugins/sap-sre-core"
+    },
+    {
+      "name": "sap-sre-config",
+      "description": "STAF configuration validation for SAP. Fetches STAF check definitions from Azure/sap-automation-qa at runtime and compares them against collected VM configs. Requires a customer Storage Account (config store).",
+      "source": "./plugins/sap-sre-config"
+    },
+    {
+      "name": "sap-sre-proxy-ops",
+      "description": "Live read-only VM command execution and guard-railed self-healing remediation via a brokered command proxy. Requires the SRE Proxy (Container App) and custom RBAC.",
+      "source": "./plugins/sap-sre-proxy-ops"
+    }
+  ]
+}

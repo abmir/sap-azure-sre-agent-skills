@@ -1,8 +1,14 @@
 # SAP SRE Agent — Team Onboarding
 #
+# >>> SAMPLE / TEMPLATE <<< The values below are an EXAMPLE (Abbas AB1 lab). Replace every
+#     environment-specific value (systems, subscription, AMS workspace, proxy URL, API key) with
+#     your own, then PASTE the result into Settings -> Team Onboarding. This file is filled in and
+#     pasted by hand — it is NOT read from the repo, because it contains secrets.
+#
 # Environment: Abbas SAP Lab (AB1 single-server)
 # Last updated: 2026-06-01
-# Upload: Paste into SRE Agent Team Onboarding + upload sap-landscape-inventory.json to Knowledge Sources
+# Upload: Paste into SRE Agent Team Onboarding. (The repo itself is connected via Code Access; the
+#         landscape inventory comes from your fork / collector, not a manual Knowledge Sources upload.)
 
 **IMPORTANT: This replaces ALL previous onboarding instructions. Disregard any earlier proxy URLs, API keys, subscription IDs, or routing rules from prior onboarding content. Use ONLY the values below.**
 

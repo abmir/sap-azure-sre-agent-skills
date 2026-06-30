@@ -1,0 +1,57 @@
+{
+  "_metadata": {
+    "title": "SAP and HANA VM certification reference",
+    "purpose": "Machine-readable INDEX of SAP/HANA certified Azure VM families and SKUs, consumed by the sap-deployment-readiness skill. Derived from the authoritative, verbatim SAP Note in knowledge/sap-note-1928533.md (and the HANA Hardware Directory). The skill fetches this file live at runtime, so updating it via pull request takes effect immediately \u2014 no plugin re-install required.",
+    "authoritative_source_in_repo": "knowledge/sap-note-1928533.md (verbatim SAP Note 1928533). If this index and that note ever disagree, the note wins \u2014 reconcile this file to it.",
+    "authoritative_sources": {
+      "sap_supported_vms": {
+        "sap_note": "1928533",
+        "title": "SAP Applications on Azure: Supported Products and Azure VM types",
+        "url": "https://launchpad.support.sap.com/#/notes/1928533",
+        "access": "Requires SAP support login (cannot be crawled as a web page by the agent)"
+      },
+      "hana_certified_vms": {
+        "sap_note": "2235581",
+        "directory_url": "https://www.sap.com/dmc/exp/2014-09-02-hana-hardware/enEN/iaas.html",
+        "title": "SAP HANA Hardware Directory — Certified IaaS Platforms"
+      }
+    },
+    "how_to_update": "When SAP publishes an updated Note 1928533 / 2235581 or HANA Hardware Directory: edit the arrays below to match the authoritative source, bump 'version' and 'last_updated', open a pull request, and merge. Agents that have Code Access to the repo (or skills that fetch this file's raw URL) pick up the new data on the next run.",
+    "version": "2026.06.30",
+    "last_updated": "2026-06-30",
+    "warning": "This is a maintained snapshot for operational convenience. The SAP Notes above remain the authoritative source. Always verify against them before a production deployment decision."
+  },
+
+  "sap_certified_families": [
+    "standardMSFamily",
+    "standardMSv2Family",
+    "standardMDSv2MedMemFamily",
+    "standardMBSv3Family",
+    "standardMSv3MedMemFamily",
+    "standardESv3Family",
+    "standardEDSv4Family",
+    "standardEDSv5Family",
+    "standardEASv4Family",
+    "standardEASv5Family",
+    "standardEBSv5Family",
+    "standardDSv3Family",
+    "standardDDSv4Family",
+    "standardDDSv5Family",
+    "standardDASv4Family",
+    "standardDASv5Family"
+  ],
+
+  "hana_certified_skus": [
+    "Standard_M32ts", "Standard_M32ls", "Standard_M64ls", "Standard_M64s",
+    "Standard_M64ms", "Standard_M128s", "Standard_M128ms",
+    "Standard_M208s_v2", "Standard_M208ms_v2",
+    "Standard_M416s_v2", "Standard_M416ms_v2",
+    "Standard_E16ds_v4", "Standard_E20ds_v4", "Standard_E32ds_v4",
+    "Standard_E48ds_v4", "Standard_E64ds_v4", "Standard_E96ds_v4",
+    "Standard_E16ds_v5", "Standard_E20ds_v5", "Standard_E32ds_v5",
+    "Standard_E48ds_v5", "Standard_E64ds_v5", "Standard_E96ds_v5",
+    "Standard_E104ids_v5",
+    "Standard_E16bds_v5", "Standard_E32bds_v5", "Standard_E48bds_v5",
+    "Standard_E64bds_v5", "Standard_E96bds_v5"
+  ]
+}

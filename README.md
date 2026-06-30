@@ -4,6 +4,34 @@ AI-powered SRE agent for SAP HANA and NetWeaver on Azure. Automates health monit
 
 **Three adoption tiers** — pick what fits your security posture. Start with zero-infrastructure Azure-native telemetry, add a customer-controlled config store when you want STAF compliance, add a brokered command proxy when you’re ready for live remediation. See [Adoption Tiers](#adoption-tiers) below.
 
+## This repo is the single source of truth
+
+This repository **is** the agent's skill pack. You don't upload skills by hand — you **fork this repo and point your SRE Agent at it**, then install the skills you need. Updates ship as pull requests; each agent picks them up on its own schedule.
+
+The agent consumes this repo through two GitHub connections (plus one manual paste):
+
+| Path | Portal location | What it pulls from this repo |
+|------|-----------------|------------------------------|
+| **Plugin Marketplace** | Builder → Plugins | **Skills** (and any MCP server configs) — the tiered plugins in [`plugins/`](plugins/) via [`.github/plugin/marketplace.json`](.github/plugin/marketplace.json). Installed as a version-pinned copy. |
+| **Code Access** | Builder → Code Access | **Everything else in the repo** — `knowledge/` (incl. the SAP/HANA cert reference), `config/`, `docs/`, and the proxy/IaC code. One connection covers it all. |
+| **Team Onboarding** (manual) | Settings → Team Onboarding | The filled onboarding text. **Pasted by hand** — it carries secrets (proxy URL, API key) so it is *not* read from the repo. |
+
+> **Repository connections are under Code Access, not Knowledge base.** The portal moved them —
+> *"Repository connections have moved to Code Access."* **Knowledge base** is now only for uploaded
+> files (PDFs) and web pages; you don't need it for anything in this repo.
+
+> **Version pinning (important):** Plugin installs are pinned to the exact git commit at install time. Changes you merge here do **not** reach an agent until someone clicks **Update** on that plugin (the portal diffs by SHA-256 hash). This is by design — it gives you production stability, staged rollouts (update dev before prod), and version diversity across agents. It is *not* a live, auto-propagating feed. *(Exception: data files a skill fetches live at runtime — like [`knowledge/sap-certified-vms.json`](knowledge/sap-certified-vms.json) and the STAF YAML — update immediately, because the skill pulls the current file each run.)*
+
+### Tiered plugins
+
+| Plugin | Tier | Skills | Requires |
+|--------|------|:------:|----------|
+| [`sap-sre-core`](plugins/sap-sre-core) | Azure-Native | 10 | Nothing (Azure APIs + AMS) |
+| [`sap-sre-config`](plugins/sap-sre-config) | + Config Store | 1 | Storage Account |
+| [`sap-sre-proxy-ops`](plugins/sap-sre-proxy-ops) | + Live Proxy | 2 | SRE Proxy + custom RBAC |
+
+Install only the plugins your tier supports. A security-strict customer installs just `sap-sre-core` and never sees the proxy skills.
+
 ## Architecture
 
 ![Azure SRE Agent for SAP Workloads — architecture](docs/sap-on-azure-sre-agent.png)
@@ -106,7 +134,26 @@ How each of the 13 custom skills behaves based on what infrastructure is deploye
 
 ```
 sap-azure-sre-agent/
-├── infra/                       # Deployment automation
+├── .github/plugin/
+│   └── marketplace.json         # Plugin Marketplace manifest — catalog of the 3 tiered plugins
+├── plugins/                     # The agent's skill pack (what the Plugin Marketplace installs)
+│   ├── sap-sre-core/            #   Tier 1 — 10 Azure-native skills (no infra)
+│   │   ├── plugin.json
+│   │   └── skills/              #   one SKILL.md per skill
+│   ├── sap-sre-config/          #   Tier 2 — STAF config validator (needs Storage Account)
+│   │   ├── plugin.json
+│   │   └── skills/
+│   └── sap-sre-proxy-ops/       #   Tier 3 — command runner + self-healing (needs SRE Proxy)
+│       ├── plugin.json
+│       └── skills/
+├── knowledge/                   # Knowledge-source guidance (connect via Knowledge base → Add repository)
+│   └── README.md
+├── config/
+│   ├── sap-landscape-inventory.template.json  # Fill in your SAP systems
+│   └── sap-landscape-inventory.json           # Example filled inventory
+├── onboarding/
+│   └── team-onboarding.template.md  # Skill routing + auth context (paste into Team Onboarding)
+├── infra/                       # Operator deploy automation (NOT installed by the agent)
 │   ├── deploy-sre-infra.ps1     # One-shot infra deploy (VNet, ACR, Storage, UMI, Container App)
 │   └── sap-sre-agent-role.json  # Custom RBAC role (read + runCommand only)
 ├── proxy/                       # FastAPI proxy (Container App)
@@ -115,13 +162,12 @@ sap-azure-sre-agent/
 │   └── requirements.txt
 ├── collector/
 │   └── collect-sap-configs.sh   # Bash script deployed to SAP VMs
-├── skills/                      # 13 SRE Agent custom skills (SKILL.md per skill)
-├── config/
-│   └── sap-landscape-inventory.template.json  # Fill in your SAP systems
-├── onboarding/
-│   └── team-onboarding.template.md  # Skill routing + auth context
 └── docs/                        # Architecture diagrams
 ```
+
+> **`plugins/` is agent-facing; `infra/`, `proxy/`, `collector/` are operator-facing.** The Plugin
+> Marketplace only reads `plugins/` (via the manifest) — it ignores the deployment automation, which
+> you run once to stand up the optional Storage Account and proxy.
 
 ## Prerequisites
 
@@ -160,37 +206,31 @@ The setup has three phases:
 | Connector | Type | Value |
 |-----------|------|-------|
 | AMS Log Analytics workspace | Log Analytics | Workspace ID of your AMS LAW |
-| sap-azure-sre-agent | GitHub repo | Your fork of `mcaps-microsoft/sap-azure-sre-agent` |
 | Microsoft Teams (optional) | Notification | For alert delivery |
 
-**Step 5: Code Access** → Add GitHub repo (your fork). Required so the agent can read skill source code.
+**Step 5: Connect this repo** → Point the agent at your fork of `mcaps-microsoft/sap-azure-sre-agent` via **Builder → Code Access** (see [This repo is the single source of truth](#this-repo-is-the-single-source-of-truth)). One connection lets the agent read `knowledge/` (incl. the SAP/HANA cert reference), `config/`, `docs/`, and the proxy/IaC code, and cite them by file and commit during investigations.
+
+> Repository connections live under **Code Access**, not Knowledge base (the portal moved them). **Knowledge base** is optional — use it only to upload extra files (e.g. a customer's own PDFs) that aren't in the repo.
 
 **Step 6: Incident Platform** → Select Azure Monitor.
 
-**Step 7: Import Skills** → Skill Builder → New → paste each `skills/<name>/SKILL.md`. Import all 13 — each skill auto-detects available infrastructure at runtime:
+**Step 7: Install Skills from the Plugin Marketplace** → Builder → Plugins → **Add marketplace** (enter your fork URL) or **Install from URL**. Install the plugins for your tier — each skill auto-detects available infrastructure at runtime:
 
-| # | Skill | Requires | Purpose |
-|---|-------|:--------:|---------|
-| 1 | sap-landscape-discovery | — | System inventory from ARM |
-| 2 | sap-operational-health | — | 5-layer health dashboard |
-| 3 | sap-cost-analysis | — | Cost breakdown + savings |
-| 4 | sap-trend-analysis | — | AMS trend projection |
-| 5 | sap-resiliency-assessment | — | Advisor + ACSS checks |
-| 6 | sap-deployment-readiness | — | SKU / quota / certification |
-| 7 | sap-incident-analysis | — | Cross-layer RCA (enhanced with Storage Account) |
-| 8 | sap-performance-diagnostics | — | HANA memory / disk / savepoint (enhanced with Storage Account) |
-| 9 | sap-ha-cluster-health | — | Pacemaker / HSR status (enhanced with Storage Account) |
-| 10 | sap-maintenance-handler | — | Graceful maintenance handling (enhanced with Storage Account) |
-| 11 | sap-config-validator | **Storage Account** | STAF compliance — fetches STAF YAML live from GitHub, compares against blob configs in-skill |
-| 12 | sap-command-runner | **SRE Proxy** | 14 read-only VM commands via proxy |
-| 13 | sap-self-healing | **SRE Proxy** | Log volume + backup + drift remediation |
+| Plugin | Install when… | Skills |
+|--------|---------------|--------|
+| **`sap-sre-core`** | Always (Tier 1+) | landscape-discovery, operational-health, cost-analysis, trend-analysis, resiliency-assessment, deployment-readiness, incident-analysis, performance-diagnostics, ha-cluster-health, maintenance-handler |
+| **`sap-sre-config`** | You deployed a Storage Account (Tier 2+) | config-validator |
+| **`sap-sre-proxy-ops`** | You deployed the SRE Proxy (Tier 3) | command-runner, self-healing |
+
+Each install is pinned to the exact commit. To adopt later changes, click **Update** on the plugin. To author or edit skills, see [Updating Skills](#updating-skills).
 
 **Step 8: Managed Resources** → Add: all SAP RGs, AMS RG, `rg-sre-proxy` (created in Phase 2).
 
-**Step 9: Knowledge Sources** → Upload:
-- `sap-landscape-inventory.json` — fill in your SAP systems from `config/sap-landscape-inventory.template.json`
-- SAP Note 1928533 PDF — VM/OS certification matrix
-- HANA Hardware Directory PDF — HANA-certified VMs
+**Step 9: Knowledge Sources (optional)** → Most knowledge already comes from the repo via Code Access (Step 5). The Knowledge base is only needed for material you'd rather upload than keep in the repo:
+- `sap-landscape-inventory.json` — your filled-in landscape (from `config/sap-landscape-inventory.template.json`). Skip if it's in your fork (covered by Code Access) or published to blob by the collector.
+- Any extra customer PDFs.
+
+> SAP/HANA VM certification is **not** uploaded here — it lives in [`knowledge/sap-certified-vms.json`](knowledge/sap-certified-vms.json) and the `sap-deployment-readiness` skill fetches it live. SAP Note 1928533 is behind SAP login and can't be added as a web page; update the repo file via PR when SAP revises the Note.
 
 ---
 
@@ -397,7 +437,14 @@ az containerapp update -n sap-sre-proxy -g rg-sre-proxy `
 
 ### Updating Skills
 
-Edit `skills/<name>/SKILL.md`, commit + push to your fork, then in sre.azure.com → Skill Builder → re-import.
+Skills live under `plugins/<plugin>/skills/<name>/SKILL.md`. To change a skill:
+
+1. Edit the `SKILL.md`, open a **pull request**, and merge to your fork's default branch.
+2. In sre.azure.com → **Builder → Plugins**, open the installed plugin and click **Update**. The portal diffs the new commit against the installed one (SHA-256) and shows what changed before you apply.
+
+Because installs are **commit-pinned**, merged changes never reach an agent automatically — each agent updates on its own schedule. This is what lets you stage a change on a dev agent before promoting it to production. (Knowledge-base and Code Access sources re-index on their own; only Plugin Marketplace installs are pinned.)
+
+> **Tip — drive it from your IDE/terminal.** With the [SRE Agent MCP server](https://learn.microsoft.com/azure/sre-agent/mcp-server) (shipped in the Azure MCP Server, `sreagent_*` tools), you can list/update skills and configure connectors from VS Code, Copilot CLI, Cursor, or Claude — no portal tab required. Needs `Reader` + `SRE Agent Administrator` on the agent resource.
 
 ### Adding a New SAP System
 

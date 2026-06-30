@@ -1,0 +1,6 @@
+{
+  "name": "sap-sre-config",
+  "description": "SAP STAF configuration validation skill. Fetches STAF check definitions from Azure/sap-automation-qa at runtime and compares them against collected SAP configs. Requires a customer Storage Account (config store).",
+  "license": "MIT",
+  "skills": ["skills/"]
+}
