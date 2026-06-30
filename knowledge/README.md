@@ -22,7 +22,8 @@ connection lets the agent read everything in the repo — this `knowledge/` fold
 
 | File | Purpose | Update model |
 |------|---------|--------------|
-| [`sap-certified-vms.json`](sap-certified-vms.json) | SAP/HANA certified VM families + SKUs (mirrors SAP Note 1928533 / 2235581 + HANA Hardware Directory). The `sap-deployment-readiness` skill fetches this **live** at runtime. | When SAP updates the Note, edit this file → PR → merge. Takes effect on the next skill run — **no plugin re-install**. |
+| [`sap-note-1928533.md`](sap-note-1928533.md) | **Authoritative, verbatim** SAP Note 1928533 (you paste the exact note / drop the PDF). The source of truth for SAP VM support. | Replace verbatim via PR when SAP revises the note. |
+| [`sap-certified-vms.json`](sap-certified-vms.json) | Machine-readable **index** derived from the note above (+ HANA Hardware Directory). The `sap-deployment-readiness` skill fetches this **live** at runtime. | Reconcile to the note, edit → PR → merge. Takes effect on the next skill run — **no plugin re-install**. |
 | [`../config/sap-landscape-inventory.template.json`](../config/sap-landscape-inventory.template.json) | **Sample** — fill in your SAP systems. | Customer populates in their fork (or uploads the filled file, or the collector publishes the live inventory to blob). |
 
 > **Why these aren't web pages:** SAP Note 1928533 is behind SAP login (the agent can't crawl it),
