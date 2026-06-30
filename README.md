@@ -8,15 +8,19 @@ AI-powered SRE agent for SAP HANA and NetWeaver on Azure. Automates health monit
 
 This repository **is** the agent's skill pack. You don't upload skills by hand — you **fork this repo and point your SRE Agent at it**, then install the skills you need. Updates ship as pull requests; each agent picks them up on its own schedule.
 
-The agent consumes this repo through three independent GitHub paths (use whichever you need):
+The agent consumes this repo through two GitHub connections (plus one manual paste):
 
 | Path | Portal location | What it pulls from this repo |
 |------|-----------------|------------------------------|
-| **Plugin Marketplace** | Builder → Plugins | **Skills** (and any MCP server configs) — the tiered plugins in [`plugins/`](plugins/) via [`.github/plugin/marketplace.json`](.github/plugin/marketplace.json) |
-| **Knowledge base → Add repository** | Builder → Knowledge base | **Knowledge** — the inventory template, `docs/`, and references (see [`knowledge/`](knowledge/README.md)) |
-| **Code Access** (optional) | Builder → Code Access | **Code** — proxy app, collector, IaC — so RCA can cite exact files/commits |
+| **Plugin Marketplace** | Builder → Plugins | **Skills** (and any MCP server configs) — the tiered plugins in [`plugins/`](plugins/) via [`.github/plugin/marketplace.json`](.github/plugin/marketplace.json). Installed as a version-pinned copy. |
+| **Code Access** | Builder → Code Access | **Everything else in the repo** — `knowledge/` (incl. the SAP/HANA cert reference), `config/`, `docs/`, and the proxy/IaC code. One connection covers it all. |
+| **Team Onboarding** (manual) | Settings → Team Onboarding | The filled onboarding text. **Pasted by hand** — it carries secrets (proxy URL, API key) so it is *not* read from the repo. |
 
-> **Version pinning (important):** Plugin installs are pinned to the exact git commit at install time. Changes you merge here do **not** reach an agent until someone clicks **Update** on that plugin (the portal diffs by SHA-256 hash). This is by design — it gives you production stability, staged rollouts (update dev before prod), and version diversity across agents. It is *not* a live, auto-propagating feed.
+> **Repository connections are under Code Access, not Knowledge base.** The portal moved them —
+> *"Repository connections have moved to Code Access."* **Knowledge base** is now only for uploaded
+> files (PDFs) and web pages; you don't need it for anything in this repo.
+
+> **Version pinning (important):** Plugin installs are pinned to the exact git commit at install time. Changes you merge here do **not** reach an agent until someone clicks **Update** on that plugin (the portal diffs by SHA-256 hash). This is by design — it gives you production stability, staged rollouts (update dev before prod), and version diversity across agents. It is *not* a live, auto-propagating feed. *(Exception: data files a skill fetches live at runtime — like [`knowledge/sap-certified-vms.json`](knowledge/sap-certified-vms.json) and the STAF YAML — update immediately, because the skill pulls the current file each run.)*
 
 ### Tiered plugins
 
@@ -204,9 +208,9 @@ The setup has three phases:
 | AMS Log Analytics workspace | Log Analytics | Workspace ID of your AMS LAW |
 | Microsoft Teams (optional) | Notification | For alert delivery |
 
-**Step 5: Connect this repo** → Point the agent at your fork of `mcaps-microsoft/sap-azure-sre-agent` in up to three places (see [This repo is the single source of truth](#this-repo-is-the-single-source-of-truth)):
-- **Builder → Knowledge base → Add repository** — indexes `knowledge/`, `config/`, `docs/`.
-- **Builder → Code Access** (optional) — lets RCA cite the proxy/collector/IaC by file and commit.
+**Step 5: Connect this repo** → Point the agent at your fork of `mcaps-microsoft/sap-azure-sre-agent` via **Builder → Code Access** (see [This repo is the single source of truth](#this-repo-is-the-single-source-of-truth)). One connection lets the agent read `knowledge/` (incl. the SAP/HANA cert reference), `config/`, `docs/`, and the proxy/IaC code, and cite them by file and commit during investigations.
+
+> Repository connections live under **Code Access**, not Knowledge base (the portal moved them). **Knowledge base** is optional — use it only to upload extra files (e.g. a customer's own PDFs) that aren't in the repo.
 
 **Step 6: Incident Platform** → Select Azure Monitor.
 
@@ -222,10 +226,11 @@ Each install is pinned to the exact commit. To adopt later changes, click **Upda
 
 **Step 8: Managed Resources** → Add: all SAP RGs, AMS RG, `rg-sre-proxy` (created in Phase 2).
 
-**Step 9: Knowledge Sources** → Upload:
-- `sap-landscape-inventory.json` — fill in your SAP systems from `config/sap-landscape-inventory.template.json`
-- SAP Note 1928533 PDF — VM/OS certification matrix
-- HANA Hardware Directory PDF — HANA-certified VMs
+**Step 9: Knowledge Sources (optional)** → Most knowledge already comes from the repo via Code Access (Step 5). The Knowledge base is only needed for material you'd rather upload than keep in the repo:
+- `sap-landscape-inventory.json` — your filled-in landscape (from `config/sap-landscape-inventory.template.json`). Skip if it's in your fork (covered by Code Access) or published to blob by the collector.
+- Any extra customer PDFs.
+
+> SAP/HANA VM certification is **not** uploaded here — it lives in [`knowledge/sap-certified-vms.json`](knowledge/sap-certified-vms.json) and the `sap-deployment-readiness` skill fetches it live. SAP Note 1928533 is behind SAP login and can't be added as a web page; update the repo file via PR when SAP revises the Note.
 
 ---
 

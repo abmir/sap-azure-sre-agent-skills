@@ -4,30 +4,38 @@ The SRE Agent **Plugin Marketplace** delivers *skills and MCP configs* from this
 **not** deliver *knowledge files*. Knowledge is a separate connection. Wire it up so this repo is
 the single source of truth for both.
 
-## Connect this repo as a knowledge source
+## How the agent gets repo knowledge — Code Access (not Knowledge base)
 
-**Builder → Knowledge base → Add repository** and point at your fork of
-`mcaps-microsoft/sap-azure-sre-agent`. The agent then indexes the repo (this `knowledge/` folder,
-`config/`, and `docs/`) and references it automatically during investigations.
+In the current SRE Agent portal, **repository connections live under Builder → Code Access**, not
+Knowledge base. The banner on the Knowledge Sources page confirms this: *"Repository connections
+have moved to Code Access."*
 
-Optionally also enable **Builder → Code Access** on the same repo so root-cause analysis can cite
-the proxy app, collector script, and IaC by file and commit.
+**Builder → Code Access → connect your fork** of `mcaps-microsoft/sap-azure-sre-agent`. One
+connection lets the agent read everything in the repo — this `knowledge/` folder, `config/`,
+`docs/`, and the proxy/IaC code — and cite it by file and commit during investigations.
 
-## Add these web pages as knowledge
+> **Builder → Knowledge base** is now only for **uploaded files** (PDFs, images) and **web pages**.
+> You don't need it for anything in this repo. Use it only if a customer wants to drop in extra
+> material that isn't in the repo.
 
-Add via **Builder → Knowledge base → Add web page** (kept as live URLs so they stay current):
+## Repo-hosted knowledge files
 
-| Source | URL | Why |
-|--------|-----|-----|
-| SAP Note 1928533 | https://launchpad.support.sap.com/#/notes/1928533 | Supported VM SKUs / OS for SAP (non-HANA certification) |
-| HANA Hardware Directory | https://www.sap.com/dmc/exp/2014-09-02-hana-hardware/enEN/iaas.html | HANA-certified IaaS VMs |
+| File | Purpose | Update model |
+|------|---------|--------------|
+| [`sap-certified-vms.json`](sap-certified-vms.json) | SAP/HANA certified VM families + SKUs (mirrors SAP Note 1928533 / 2235581 + HANA Hardware Directory). The `sap-deployment-readiness` skill fetches this **live** at runtime. | When SAP updates the Note, edit this file → PR → merge. Takes effect on the next skill run — **no plugin re-install**. |
+| [`../config/sap-landscape-inventory.template.json`](../config/sap-landscape-inventory.template.json) | **Sample** — fill in your SAP systems. | Customer populates in their fork (or uploads the filled file, or the collector publishes the live inventory to blob). |
 
-## Repo-hosted knowledge
+> **Why these aren't web pages:** SAP Note 1928533 is behind SAP login (the agent can't crawl it),
+> and the HANA Hardware Directory is a dynamic page that indexes poorly. Capturing the data as a
+> repo file makes it reliable, version-controlled, and replaceable via a simple PR — which is the
+> whole point of the single-source-of-truth model.
 
-| File | Purpose |
-|------|---------|
-| `../config/sap-landscape-inventory.template.json` | Fill in your SAP systems, then upload as a Knowledge Source (or let the collector publish the live inventory to blob) |
+## Customer samples (populate before use)
 
-> **Tip:** the landscape inventory is the single most valuable knowledge file — it gives the agent
-> application context (which systems are critical, how they connect, role per VM) that live Azure
-> Resource Graph alone can't provide.
+These ship as **samples/templates**. The customer fills them in for their own environment:
+
+| Sample | What the customer does |
+|--------|------------------------|
+| `../config/sap-landscape-inventory.template.json` | Fill in their SAP systems (blank template) |
+| `../config/sap-landscape-inventory.json` | Example filled inventory (the AB1 lab) — replace with your own or delete |
+| `../onboarding/team-onboarding.template.md` | Fill in environment + secrets, then **paste** into Settings → Team Onboarding (not read from the repo, because it contains keys) |
