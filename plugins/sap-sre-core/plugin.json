@@ -1,0 +1,6 @@
+{
+  "name": "sap-sre-core",
+  "description": "10 Azure-native SAP on Azure SRE skills. All read-only and work immediately with Azure APIs and AMS telemetry — no extra infrastructure required.",
+  "license": "MIT",
+  "skills": ["skills/"]
+}

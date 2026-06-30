@@ -1,6 +1,0 @@
-{
-  "name": "sap-azure-sre-agent",
-  "description": "12 SRE skills + 1 command runner for SAP HANA and NetWeaver workloads on Azure. All read-only — zero changes to your SAP environment. 10 skills work immediately with Azure APIs; command proxy unlocks live VM queries.",
-  "license": "MIT",
-  "skills": ["skills/"]
-}
