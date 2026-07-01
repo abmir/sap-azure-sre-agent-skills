@@ -43,14 +43,16 @@ Each phase is independent — stop after any phase. Deeper detail lives in [docs
 
 ### Phase 0 — Azure-native · ~30 min · no infrastructure · 10 skills
 
-1. **Create the agent.** At [sre.azure.com](https://sre.azure.com) create an SRE Agent, enable its built-in **Tools** and **Skills** (Capabilities), and note its **Managed Identity** object ID (Identity blade).
+1. **Create the agent & enable capabilities.** At [sre.azure.com](https://sre.azure.com) create an SRE Agent and note its **Managed Identity** object ID (Identity blade).
+   - **Tools & Skills:** In **Capabilities → Tools** and **Capabilities → Skills**, keep the platform **defaults enabled** (Core is always on). The SAP skills rely on these built-in tools — make sure none are disabled: `RunAzCliReadCommands`, `GetArmResourceAsJson`, `QueryLogAnalyticsByWorkspaceId`, `GetMetricTimeSeriesElementsForAzureResource`, `GetActivityLogsSummary`, `GetChangeHistory`, `CheckIfResourceExists`, `CreateScheduledMonitoringTask`, `ExecutePythonCode`, and the `Plot*` visualization tools (i.e. keep the **Core, Azure Operation, Diagnostics, Log Query, Knowledge Base, Code-execution** categories on). Your 13 SAP skills are **custom** — they arrive via **Plugins** in step 5, not on this page.
+   - Exact clicks: [Manage global tools (tutorial)](https://learn.microsoft.com/azure/sre-agent/manage-global-tools) · [Tools & skills page](https://learn.microsoft.com/azure/sre-agent/global-tools-page) · [Tools overview](https://learn.microsoft.com/azure/sre-agent/tools).
 2. **Grant read access (RBAC).** The agent reads Azure platform data — resource state, metrics, health, activity log, advisor, cost, resource graph — through its Managed Identity. Grant it read roles on **every relevant resource group**: your SAP app RG(s), the ACSS/managed RG(s) (`mrg-…`), and the AMS workspace RG (`mrg-sapmon-…`). Repeat both commands for each RG:
    ```bash
    az role assignment create --assignee-object-id <agent-mi> --assignee-principal-type ServicePrincipal --role Reader             --scope /subscriptions/<sub>/resourceGroups/<RG>
    az role assignment create --assignee-object-id <agent-mi> --assignee-principal-type ServicePrincipal --role "Monitoring Reader" --scope /subscriptions/<sub>/resourceGroups/<RG>
    ```
    - **Cost skills:** add **Cost Management Reader** (RG scope works; subscription scope adds cross-RG rollups + RI coverage).
-   - **Optional — subscription Reader:** grant `Reader` at **subscription** scope only if you want **Service Health**, subscription-wide cost/RI, **Defender** secure score, or **auto-discovery of all SAP systems**. Skip it and those degrade gracefully — per-system skills still work. Details: [RBAC scoping](docs/reference.md#rbac-scoping--rg-only-vs-subscription).
+   - **Optional — subscription Reader:** grant `Reader` at **subscription** scope only if you want **Service Health**, subscription-wide cost/RI, **Defender** secure score, or **auto-discovery of all SAP systems**. Skip it and those degrade gracefully — per-system skills still work. Details: [RBAC scoping](docs/reference.md#rbac-scoping--rg-only-vs-subscription) · official [SRE Agent permissions](https://learn.microsoft.com/azure/sre-agent/permissions).
 3. **Add telemetry connectors.** Builder → **Connectors**:
    - **AMS Log Analytics workspace** — required for the HANA / OS / cluster health layers (the agent queries it by workspace ID).
    - **Application Insights** *(optional)* — only if your app tier emits to it; it's **additive** to AMS/ARM, not a replacement.
