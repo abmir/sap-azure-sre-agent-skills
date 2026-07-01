@@ -2,7 +2,7 @@
 
 AI-powered SRE agent for SAP HANA and NetWeaver on Azure. Automates health monitoring, STAF configuration validation, incident analysis, and cost optimization — all through natural language at [sre.azure.com](https://sre.azure.com).
 
-**Three adoption tiers** — pick what fits your security posture. Start with zero-infrastructure Azure-native telemetry, add a customer-controlled config store when you want STAF compliance, add a brokered command proxy when you’re ready for live remediation. See [Tiered plugins](#tiered-plugins) below, or the full [Adoption planner](docs/adoption-planner.md).
+**Three adoption tiers** — pick what fits your security posture. Start with Azure-native telemetry using your existing Azure signals, add a customer-controlled config store for STAF compliance that unlocks the config validator and enriches 4 more skills (incident RCA, performance diagnostics, HA cluster health, maintenance) — 5 skills in all, then add a brokered command proxy to run an approved set of read-only commands on your SAP VMs. See [Tiered plugins](#tiered-plugins) below, or the full [Adoption planner](docs/adoption-planner.md).
 
 ## This repo is the single source of truth
 
@@ -16,11 +16,7 @@ The agent consumes this repo through two GitHub connections (plus one manual pas
 | **Code Access** | Builder → Code Access | **Everything else in the repo** — `knowledge/` (incl. the SAP/HANA cert reference), `config/`, `docs/`, and the proxy/IaC code. One connection covers it all. |
 | **Team Onboarding** (manual) | Settings → Team Onboarding | The filled onboarding text. **Pasted by hand** — it carries secrets (proxy URL, API key) so it is *not* read from the repo. |
 
-> **Repository connections are under Code Access, not Knowledge base.** The portal moved them —
-> *"Repository connections have moved to Code Access."* **Knowledge base** is now only for uploaded
-> files (PDFs) and web pages; you don't need it for anything in this repo.
-
-> **Version pinning (important):** Plugin installs are pinned to the exact git commit at install time. Changes you merge here do **not** reach an agent until someone clicks **Update** on that plugin (the portal diffs by SHA-256 hash). This is by design — it gives you production stability, staged rollouts (update dev before prod), and version diversity across agents. It is *not* a live, auto-propagating feed. *(Exception: data files a skill fetches live at runtime — like [`knowledge/sap-certified-vms.json`](knowledge/sap-certified-vms.json) and the STAF YAML — update immediately, because the skill pulls the current file each run.)*
+> **Note:** plugin installs are **commit-pinned** — merges reach an agent only when someone clicks **Update** on the plugin (it's not a live feed). See [Updates & version pinning](docs/reference.md#updates--version-pinning).
 
 ### Tiered plugins
 
@@ -37,6 +33,7 @@ Install only the plugins your tier supports. A security-strict customer installs
 Pick your components with the [Adoption planner](docs/adoption-planner.md); this is the simplest happy path. Each phase is independent — stop after any phase.
 
 **Phase 0 — Azure-native (≈30 min, no infrastructure)**
+
 1. Create an agent at [sre.azure.com](https://sre.azure.com); note its Managed Identity.
 2. Grant that identity **Reader** + **Monitoring Reader** on your SAP resource groups (and **Cost Management Reader** at subscription scope).
 3. **Builder → Code Access** → connect your fork of this repo (skills' source + knowledge).
@@ -44,12 +41,14 @@ Pick your components with the [Adoption planner](docs/adoption-planner.md); this
 5. Ask: *"What SAP systems do I have?"*, *"Is AB1 healthy?"*, *"How much does AB1 cost?"*
 
 **Phase 1 — Config store (≈1 hr) — adds STAF validation + config-enriched RCA/perf/HA**
+
 6. Deploy storage + collector: `infra/deploy-sre-infra.ps1 -Mode ConfigStore -SubscriptionId <sub> -StorageAccountName <name> -SreAgentUmiPrincipalId <agent-mi-object-id>`. This creates the `sap-configs` storage and grants the **agent MI Storage Blob Data Reader** (the agent reads configs **directly** — no proxy).
 7. VNet-integrate the agent and allow its subnet on the storage firewall (so the private storage is reachable).
 8. Assign the **collector UMI** to your SAP VMs and run the collector (via `az vm run-command`).
 9. **Builder → Plugins** → install **`sap-sre-config`**. Ask: *"Run config checks for AB1."*
 
 **Phase 2 — Live commands (optional, ≈1 hr) — adds command-runner + self-healing**
+
 10. Deploy the optional proxy: `infra/deploy-sre-infra.ps1 -Mode Full ...` (its own resource group; commands only, no storage role).
 11. Add the proxy URL + key to **Team Onboarding**, then **Builder → Plugins** → install **`sap-sre-proxy-ops`**. Ask: *"Run uptime on AB1vm."*
 

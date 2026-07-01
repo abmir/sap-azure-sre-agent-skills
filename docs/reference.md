@@ -90,3 +90,13 @@ Container App logs:
 az containerapp logs show -n sap-sre-proxy -g rg-sre-proxy --tail 100 --follow
 ```
 
+
+## Updates & version pinning
+
+Plugin installs are pinned to the exact git commit at install time. Changes you merge do **not** reach an agent until someone clicks **Update** on that plugin (the portal diffs by SHA-256 hash). This is by design — it gives you production stability, staged rollouts (update dev before prod), and version diversity across agents. It is *not* a live, auto-propagating feed.
+
+*Exception:* data files a skill fetches live at runtime — like `knowledge/sap-certified-vms.json` and the STAF YAML — update immediately, because the skill pulls the current file on each run.
+
+## Repository connections (Code Access vs Knowledge base)
+
+In the current portal, **repository connections are under Builder → Code Access**, not Knowledge base ("Repository connections have moved to Code Access"). **Knowledge base** is now only for uploaded files (PDFs) and web pages — you don't need it for anything already in this repo.
