@@ -45,13 +45,27 @@ Each phase is independent — stop after any phase. Deeper detail lives in [docs
 
 1. **Create the agent & enable capabilities.** At [sre.azure.com](https://sre.azure.com) create an SRE Agent and note its **Managed Identity** object ID (Identity blade).
    - **Tools & Skills:** In **Capabilities → Tools** and **Capabilities → Skills**, leave everything at the **defaults** — no changes needed. Access is enforced by the agent's **Managed Identity + read-only RBAC** (step 2), so the built-in tool toggles aren't the guardrail. Further reading: [Manage global tools](https://learn.microsoft.com/azure/sre-agent/manage-global-tools) · [Tools & skills page](https://learn.microsoft.com/azure/sre-agent/global-tools-page) · [Tools overview](https://learn.microsoft.com/azure/sre-agent/tools).
-2. **Grant read access (RBAC).** The agent reads Azure platform data — resource state, metrics, health, activity log, advisor, cost, resource graph — through its Managed Identity. Grant it read roles on **every relevant resource group**: your SAP app RG(s), the ACSS/managed RG(s) (`mrg-…`), and the AMS workspace RG (`mrg-sapmon-…`). Repeat both commands for each RG:
+2. **Grant read access (RBAC).** The agent reads all Azure platform data — resource state, metrics, health, activity log, advisor, cost, resource graph — through its **Managed Identity**, so it only needs **read** roles. Pick one model:
+
+   | Scope | RBAC roles | Justification |
+   |-------|-----------|---------------|
+   | **A. Subscription** *(recommended, simplest)* | **Reader** + **Monitoring Reader** + **Cost Management Reader** | One grant inherits to every RG **and** covers the subscription-only sources: Service Health, cross-RG cost + RI coverage, Defender secure score, and auto-discovery of all SAP systems. |
+   | **B. SAP system RGs** (`RG_SAP_*`) | **Reader** + **Monitoring Reader** | Per-system data: VM / disk / NIC state, platform metrics, Resource Health, Activity Log, Advisor. |
+   | **B. Other RGs** — ACSS/managed (`mrg-*`) **and** AMS workspace (`mrg-sapmon-*`) | **Reader** + **Monitoring Reader** *(+ Cost Management Reader where you want cost)* | The VIS, disks, and Key Vault (ACSS) and the **Log Analytics workspace** (AMS) live in *separate* RGs — the SAP-app RG grant doesn't reach them. |
+
+   > **Grant A _or_ both B rows — not both.** Subscription scope (A) inherits to every RG, so it's the one-step path. If the customer **won't** grant at subscription scope, do the **B rows on every relevant RG** instead (SAP app RGs + each `mrg-*` + each `mrg-sapmon-*`). Per-system skills then work fully; you only lose the **subscription-only** sources (Service Health, sub-wide cost/RI, Defender score, full auto-discovery), and the skills disclose that when asked. Details: [RBAC scoping](docs/reference.md#rbac-scoping--rg-only-vs-subscription) · official [SRE Agent permissions](https://learn.microsoft.com/azure/sre-agent/permissions).
+
    ```bash
+   # Model A — subscription scope (one-time; simplest):
+   az role assignment create --assignee-object-id <agent-mi> --assignee-principal-type ServicePrincipal --role Reader                  --scope /subscriptions/<sub>
+   az role assignment create --assignee-object-id <agent-mi> --assignee-principal-type ServicePrincipal --role "Monitoring Reader"     --scope /subscriptions/<sub>
+   az role assignment create --assignee-object-id <agent-mi> --assignee-principal-type ServicePrincipal --role "Cost Management Reader" --scope /subscriptions/<sub>
+
+   # Model B — resource-group scope: repeat BOTH for EACH SAP RG, each mrg-* (ACSS), and each mrg-sapmon-* (AMS) RG:
    az role assignment create --assignee-object-id <agent-mi> --assignee-principal-type ServicePrincipal --role Reader             --scope /subscriptions/<sub>/resourceGroups/<RG>
    az role assignment create --assignee-object-id <agent-mi> --assignee-principal-type ServicePrincipal --role "Monitoring Reader" --scope /subscriptions/<sub>/resourceGroups/<RG>
    ```
-   - **Cost skills:** add **Cost Management Reader** (RG scope works; subscription scope adds cross-RG rollups + RI coverage).
-   - **Optional — subscription Reader:** grant `Reader` at **subscription** scope only if you want **Service Health**, subscription-wide cost/RI, **Defender** secure score, or **auto-discovery of all SAP systems**. Skip it and those degrade gracefully — per-system skills still work. Details: [RBAC scoping](docs/reference.md#rbac-scoping--rg-only-vs-subscription) · official [SRE Agent permissions](https://learn.microsoft.com/azure/sre-agent/permissions).
+
 3. **Add telemetry connectors.** Builder → **Connectors**:
    - **AMS Log Analytics workspace** — required for the HANA / OS / cluster health layers (the agent queries it by workspace ID).
    - **Application Insights** *(optional)* — only if your app tier emits to it; it's **additive** to AMS/ARM, not a replacement.
