@@ -14,17 +14,28 @@
 
 ## Deployed Infrastructure
 
-The agent automatically detects available infrastructure from this section and adapts skill behavior. No mode numbers — just list what's deployed. Remove a line to disable that capability.
+The agent auto-detects capabilities from this section and adapts skill behavior. **Every capability is independently optional and phased** — list ONLY what you have enabled today; add lines as you complete later phases; remove a line to turn that capability off. The two lines skills key on are **Storage Account** and **SRE Proxy** — include them **only when actually deployed** (their mere presence flips the dependent skills on).
+
+**Enabled now (edit to match your environment):**
 
 - **Storage Account:** stsreconfigs004 / container `sap-configs`
 - **SRE Proxy:** https://sap-sre-proxy.happystone-9c50a4be.centralus.azurecontainerapps.io
+- **Collector:** collector UMI + weekly cron on SAP VMs (config store can run without the proxy — deploy via `az vm run-command`)
+- **SAP telemetry:** Azure Monitor for SAP (AMS) — workspace `d337a40e-3213-4e5a-a0e8-c560d537c085`
+- **Incident platform:** Azure Monitor
 
-**How it works:** Each skill checks this section for what it needs:
-- Skills needing stored configs (config-validator, enriched RCA/perf/HA/maintenance) look for the **Storage Account** line
-- Skills needing live VM access (command-runner, self-healing) look for the **SRE Proxy** line
-- All other skills work with Azure APIs alone — no infrastructure needed
+**Not enabled — the agent must NOT assume these exist** (describe deferrals in plain words; do NOT use the `Storage Account:` / `SRE Proxy:` labels here or skills will misdetect them):
 
-**To scale down:** remove the SRE Proxy line → command-runner and self-healing become unavailable. Remove both lines → Azure-native skills only (10 skills still work).
+- _Example:_ Live VM command execution & self-healing — **not enabled (Phase 2)**; omit the SRE Proxy line above until deployed.
+- _Example:_ SAP-app telemetry in **SAP Cloud ALM / Focus Run** — **planned Phase 2** connector; until then, drop the SAP telemetry line and telemetry-dependent skills use Azure platform metrics only.
+- _Example:_ **ServiceNow** incident platform — **tabled**.
+
+**How it works:** each skill checks this section for what it needs:
+- config-validator + enriched RCA / performance / HA / maintenance → look for the **Storage Account** line
+- command-runner + self-healing → look for the **SRE Proxy** line
+- everything else → Azure APIs + whatever telemetry source is listed (AMS if present, otherwise Azure platform metrics)
+
+**To change phase:** enable the component, then add its line to *Enabled now* (for the proxy, paste the real URL — that single line turns command-runner & self-healing on). Remove a line to scale a capability back down.
 
 ## Agent Overview
 
