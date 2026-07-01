@@ -1,4 +1,4 @@
-# SAP SRE Proxy — MCP server (scaffold)
+# SAP SRE command proxy — MCP server
 FROM python:3.12-slim
 
 WORKDIR /app

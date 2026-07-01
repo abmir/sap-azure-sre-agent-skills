@@ -16,8 +16,8 @@ tools:
 
 This skill **requires a Storage Account** in the `## Deployed Infrastructure` section of Team Onboarding.
 
-- **If no Storage Account is listed** — Respond exactly: "Config validation requires a Storage Account with collected SAP configs (the `sap-configs` container must exist and the agent MI must have `Storage Blob Data Reader` on it). No Storage Account is listed in Deployed Infrastructure. Run `infra/deploy-sre-infra.ps1 -Mode ConfigStore` to deploy one." Then **stop**. Do NOT attempt to fetch STAF or list blobs.
-- **If Storage Account is listed** — Run the flow below. Configs are read from blob using the **SRE Agent's own Managed Identity** (built into `RunAzCliReadCommands` — `--auth-mode login`). The SRE Proxy is not needed for this skill.
+- **If no Storage Account is listed** — Respond exactly: "Config validation requires a Storage Account with collected SAP configs (the `sap-configs` container must exist and the agent MI must have `Storage Blob Data Reader` on it). No Storage Account is listed in Deployed Infrastructure. Run `infra/deploy-sre-infra.ps1` to deploy one." Then **stop**. Do NOT attempt to fetch STAF or list blobs.
+- **If Storage Account is listed** — Run the flow below. Configs are read from blob using the **SRE Agent's own Managed Identity** (built into `RunAzCliReadCommands` — `--auth-mode login`). No proxy is needed for this skill.
 
 ## Architecture
 
@@ -41,7 +41,7 @@ This skill **requires a Storage Account** in the `## Deployed Infrastructure` se
 
 1. **Never invent or fabricate checks.** Every check ID, expected value, and reference must come from the STAF YAML fetched from GitHub. If GitHub is unreachable and no checks load, report the failure and stop.
 2. **Never deploy anything.** No collector deployment, no VM commands, no infrastructure changes.
-3. **Never use `az vm run-command`.** If configs are missing or stale, instruct the user to trigger the collector separately (if SRE Proxy is deployed: ask `sap-command-runner` to run `run_collector`).
+3. **Never use `az vm run-command`.** If configs are missing or stale, instruct the user to re-run the collector on the affected VM (via `az vm run-command` or their config-mgmt tool) so fresh configs land in the `sap-configs` blob.
 4. **Present results exactly as computed** — do not add, remove, or modify any check result.
 
 ### STAF YAML schema (verified against `Azure/sap-automation-qa` @ `main`)
@@ -78,7 +78,7 @@ az storage blob download-batch \
 ```
 
 If the blob list is empty or the newest file is older than 14 days, **stop and report**:
-*"No fresh collected configs found for `<SID>/<host>` in `<storage>/sap-configs`. The collector may not be installed on this VM. Trigger collection (if SRE Proxy is deployed: ask `sap-command-runner` to run `run_collector`; otherwise: `az vm run-command invoke -g <RG> -n <vm> --command-id RunShellScript --scripts 'sudo /opt/sre/run-collector.sh'`) and re-run this validation."*
+*"No fresh collected configs found for `<SID>/<host>` in `<storage>/sap-configs`. The collector may not be installed on this VM. Trigger collection (if MCP command proxy is deployed: ask `sap-command-runner` to run `run_collector`; otherwise: `az vm run-command invoke -g <RG> -n <vm> --command-id RunShellScript --scripts 'sudo /opt/sre/run-collector.sh'`) and re-run this validation."*
 
 ### Step 2 — Fetch STAF definitions and run the comparison
 

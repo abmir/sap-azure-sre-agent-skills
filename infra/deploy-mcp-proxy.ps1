@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Deploy the OPTIONAL SAP SRE Proxy **MCP server** as an Azure Container App.
+    Deploy the OPTIONAL SAP SRE command proxy (MCP server) as an Azure Container App.
 
 .DESCRIPTION
     Deploys the MCP server in ../proxy-mcp as a VNet-integrated Azure Container App in

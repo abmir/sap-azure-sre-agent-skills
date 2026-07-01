@@ -20,7 +20,7 @@
     },
     {
       "name": "sap-sre-proxy-ops",
-      "description": "Live read-only VM command execution and guard-railed self-healing remediation via a brokered command proxy. Requires the SRE Proxy (Container App) and custom RBAC.",
+      "description": "Live read-only VM command execution and guard-railed self-healing remediation via a brokered command proxy. Requires the MCP command proxy (Container App) and custom RBAC.",
       "source": "./plugins/sap-sre-proxy-ops"
     }
   ]

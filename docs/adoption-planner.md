@@ -2,15 +2,15 @@
 
 ## Adoption Tiers
 
-The agent supports three deployment tiers. Each tier is a strict superset of the previous one — start with Azure-native, add a config store when you need config-level visibility, add the proxy when you're ready for live commands. Skills auto-detect what's available from the `## Deployed Infrastructure` section in Team Onboarding — no mode numbers to manage.
-con
+The agent supports three deployment tiers. Each tier is a strict superset of the previous one — start with Azure-native, add a config store when you need config-level visibility, add the MCP command proxy when you're ready for live commands. Skills auto-detect what's available from the `## Deployed Infrastructure` section in Team Onboarding — no mode numbers to manage.
+
 > **These three tiers are *presets*, not a rigid ladder.** Every box in the [architecture](architecture.md) is **independently optional** and can be adopted in any **phase**. If you want to mix and match — e.g. collect configs to storage but *not* deploy the proxy, keep SAP telemetry in SAP Cloud ALM / Focus Run for now, or defer ServiceNow — see the component menu below.
 
 | Tier | What's Deployed | Capabilities | Customer Profile | Effort |
 |:----:|----------------|--------------|------------------|:------:|
 | **Azure-Native** | Nothing (just `sre.azure.com` + your existing AMS) | 10 skills using only Azure APIs and AMS telemetry. No config validation, no live commands. | Security-strict customers. AMS already deployed. Wants insight without standing up new infra. | ~30 min |
 | **+ Config Store** | **Storage Account** (`sap-configs` blob container) + **collector UMI** (assigned to SAP VMs) | All base skills + **STAF config validation** + config-enriched RCA / performance / HA skills. 11 skills total. | Wants STAF compliance reporting and richer RCA, but does not want a proxy executing live commands. | ~1 hr |
-| **+ Live Proxy** | Config Store + **Container App proxy** (FastAPI, VNet-integrated) + **proxy UMI** + Entra ID Easy Auth | All skills including **live read-only VM commands** + **self-healing remediation**. All 13 skills. | Wants full SRE automation including remediation. Accepts a brokered command path with custom RBAC. | ~2 hr |
+| **+ Live Commands** | Config Store + **MCP command proxy** (VNet-integrated Container App exposing read-only commands over MCP) + **proxy UMI** + custom RBAC | All skills including **live read-only VM commands** + **self-healing remediation**. All 13 skills. | Wants full SRE automation including remediation. Accepts a brokered command path with custom RBAC. | ~2 hr |
 
 ### How config validation works
 
@@ -20,14 +20,14 @@ con
 
 ### Adding infrastructure later
 
-- **Add Config Store** — Run the deploy script with `-Mode ConfigStore -SreAgentUmiPrincipalId <agent-mi-object-id>`; assign the collector UMI to SAP VMs; deploy the collector. Add the `Storage Account` line to Team Onboarding. Import the Config Validator skill on the portal.
-- **Add Live Proxy** — Run the deploy script with `-Mode Full`; add the `SRE Proxy` line to Team Onboarding. Import `sap-command-runner` and `sap-self-healing` skills.
+- **Add Config Store** — Run `infra/deploy-sre-infra.ps1 -SreAgentUmiPrincipalId <agent-mi-object-id>`; assign the collector UMI to SAP VMs; deploy the collector. Add the `Storage Account` line to Team Onboarding. Import the Config Validator skill on the portal.
+- **Add Live Commands** — Run `infra/deploy-mcp-proxy.ps1`; register the `sap-sre-proxy` MCP connector and add the `MCP Command Proxy` line to Team Onboarding. Import `sap-command-runner` and `sap-self-healing` skills.
 
 ### Skills × Infrastructure capability matrix
 
 How each of the 13 custom skills behaves based on what infrastructure is deployed. **Full** = skill operates at its full design intent. **Enhanced** = skill adds config or live data. **Blocked** = skill refuses politely and explains what's needed.
 
-| # | Skill | No infra | + Storage Account | + SRE Proxy | Notes |
+| # | Skill | No infra | + Storage Account | + MCP Proxy | Notes |
 |:-:|------|:------:|:------:|:------:|------|
 | 1 | `sap-landscape-discovery` | ✅ Full | ✅ Full | ✅ Full | Pure ARM API |
 | 2 | `sap-operational-health` | ✅ Full | ✅ Full | ✅ + live | Already has graceful proxy fallback |
@@ -60,13 +60,13 @@ The three tiers are **presets**. In practice each customer enables a **different
 | **E. SAP telemetry — AMS** (Azure Monitor for SAP) | HANA/OS metric depth for health/trend/perf | AMS deployed | fall back to VM-level metrics only | 1 or 2 |
 | **E′. SAP telemetry — SAP Cloud ALM / Focus Run** | SAP-app-level signals from a non-Azure source | Connector (MCP/HTTP) | skills use whatever telemetry *is* present | usually 2 |
 | **F. Config Store** — Storage Account (`sap-configs`) + **collector UMI + cron** | STAF config validation + config-enriched RCA/perf/HA | Storage + collector on VMs (**no proxy needed**) | config-validator blocked; RCA/perf/HA run telemetry-only | 1 or 2 |
-| **G. SRE Proxy** — Container App + proxy UMI + custom RBAC | Live read-only VM commands + self-healing | Proxy deployed | command-runner & self-healing blocked | 2+ |
+| **G. MCP Command Proxy** — Container App + proxy UMI + custom RBAC | Live read-only VM commands + self-healing | Proxy deployed + `sap-sre-proxy` connector | command-runner & self-healing blocked | 2+ |
 | **H. Incident platform — Azure Monitor** | Alert-driven investigations | Azure Monitor alerts | manual / chat-driven only | 1 or 2 |
 | **H′. Incident platform — ServiceNow / PagerDuty** | Ticketing integration | Connector | use Azure Monitor or none | usually 2 |
 | **I. Notification connectors** — Teams / Outlook | Push alerts & summaries to people | Connector | no push notifications | any |
 | **J. Third-party connectors** — Dynatrace / Sentinel / Focus Run | Extra observability / SIEM signals | Connector | Azure-native signals only | 2+ |
 
-> **Key separation (the common Phase-1 shape):** the **Config Store (F)** — collector UMI + cron uploading configs to a Storage Account — is **independent of the SRE Proxy (G)**. You can enable config collection and STAF validation **without** the Container App proxy: deploy the collector with `az vm run-command` instead of the proxy (see [Adding infrastructure later](#adding-infrastructure-later)). The proxy is only needed for *live* VM commands and self-healing (Phase 2+).
+> **Key separation (the common Phase-1 shape):** the **Config Store (F)** — collector UMI + cron uploading configs to a Storage Account — is **independent of the MCP command proxy (G)**. You can enable config collection and STAF validation **without** the Container App proxy: deploy the collector with `az vm run-command` instead of the proxy (see [Adding infrastructure later](#adding-infrastructure-later)). The proxy is only needed for *live* VM commands and self-healing (Phase 2+).
 
 > **Telemetry is pluggable.** Skills don't hard-require AMS. If your SAP-app telemetry lives in **SAP Cloud ALM / Focus Run** (or Dynatrace, Sentinel) rather than Azure Monitor for SAP, leave AMS out and bring that source in later as a **connector (E′/J)**. Until then, telemetry-dependent skills (health, trend, performance) run on **Azure platform metrics** (VM Insights, Resource Health) and note that deeper SAP signals arrive in a later phase.
 
@@ -84,7 +84,7 @@ A customer pointing the agent at existing SAP workloads and adopting incremental
 | Config Validator `sap-sre-config` (B) | ✅ | | |
 | SAP telemetry — AMS (E) | ⚠️ only if already in AMS | | |
 | SAP telemetry — Focus Run / Cloud ALM (E′) | | ✅ connector | |
-| SRE Proxy + `sap-sre-proxy-ops` (G, B) | | ✅ | |
+| MCP Command Proxy + `sap-sre-proxy-ops` (G, B) | | ✅ | |
 | Incident platform — Azure Monitor (H) | ✅ | | |
 | Incident platform — ServiceNow (H′) | | | ⏸️ deferred |
 | Teams notifications (I) | optional | | |

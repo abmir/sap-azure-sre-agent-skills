@@ -1,9 +1,7 @@
-# SAP SRE Proxy — MCP server (scaffold)
+# SAP SRE command proxy — MCP server
 
-The **target state** of the optional SRE Proxy: a standalone **MCP server** the Azure SRE Agent
-calls through a **connector**, instead of the bespoke REST + `X-API-Key` proxy in [`../proxy`](../proxy).
-
-It exposes the same **allowlisted, read-only** SAP VM commands as MCP tools:
+The optional SRE command proxy: a standalone **MCP server** the Azure SRE Agent calls through a
+**connector**. It exposes **allowlisted, read-only** SAP VM commands as MCP tools:
 
 | Tool | What it does |
 |------|--------------|
@@ -14,10 +12,9 @@ It exposes the same **allowlisted, read-only** SAP VM commands as MCP tools:
 > **Scope:** live VM commands only. It does **not** touch storage — config reads are done by the
 > SRE Agent's own Managed Identity reading the `sap-configs` blob directly.
 
-## Status — SCAFFOLD
+## Deploy
 
-`server.py` runs and exposes the tools (FastMCP, Streamable-HTTP), mirroring
-[`../proxy/app.py`](../proxy/app.py) `ALLOWED_COMMANDS`. Deploy it with
+`server.py` runs and exposes the tools (FastMCP, Streamable-HTTP). Deploy it with
 [`../infra/deploy-mcp-proxy.ps1`](../infra/deploy-mcp-proxy.ps1):
 
 ```powershell
@@ -26,8 +23,7 @@ It exposes the same **allowlisted, read-only** SAP VM commands as MCP tools:
 
 That script creates the resource group, a managed identity with the custom **"SAP SRE Agent
 Operator"** role on your SAP RGs, an ACR image build from this folder, a VNet-integrated Container
-App, and prints the **MCP URL + API key** to register as a connector. Before relying on it in
-production, still review: ingress auth hardening, timeouts, structured logging, and tests.
+App, and prints the **MCP URL + API key** to register as a connector.
 
 ## Run locally
 
@@ -42,9 +38,3 @@ SUBSCRIPTION_ID="<sub-id>" python server.py
 Install the **`sap-sre-proxy-ops`** plugin (it ships [`.mcp.json`](../plugins/sap-sre-proxy-ops/.mcp.json)),
 then **Builder → Connectors → Add connector → MCP Server**, using your deployed server URL and the
 API key/header. Once **Connected**, `sap-command-runner` and `sap-self-healing` use these tools.
-
-## Migration note
-
-The REST proxy in [`../proxy`](../proxy) keeps working during the transition. Once this MCP server is
-deployed and validated, point the `sap-sre-proxy-ops` skills at the MCP tools and retire the REST
-endpoints.
