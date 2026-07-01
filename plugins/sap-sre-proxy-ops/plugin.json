@@ -1,6 +1,7 @@
 {
   "name": "sap-sre-proxy-ops",
-  "description": "Live read-only VM command runner and guard-railed self-healing skills. Require the SRE Proxy (Container App) and custom RBAC. The proxy URL and API key are supplied through Team Onboarding, not through an MCP connector.",
+  "description": "Live read-only VM command runner and guard-railed self-healing skills. Require the SRE Proxy and custom RBAC. Ships an .mcp.json so the proxy's live-command tools can be added as an MCP connector (see proxy-mcp/).",
   "license": "MIT",
-  "skills": ["skills/"]
+  "skills": ["skills/"],
+  "mcpServers": ".mcp.json"
 }

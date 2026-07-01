@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "sap-sre-proxy": {
+      "url": "https://<your-sap-sre-proxy-mcp-host>/mcp",
+      "headers": {
+        "x-api-key": "${env:SAP_SRE_MCP_API_KEY}"
+      }
+    }
+  }
+}

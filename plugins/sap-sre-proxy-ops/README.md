@@ -17,9 +17,11 @@ This is **Tier 3 (+ Live Proxy)** of the SAP Azure SRE Agent.
 
 Install [`sap-sre-core`](../sap-sre-core) (and usually [`sap-sre-config`](../sap-sre-config)) first.
 
-> **Note on MCP:** the current proxy is a custom HTTP service, so this plugin intentionally does
-> **not** ship a `.mcp.json`. If the proxy is later re-exposed as an MCP server, add a `.mcp.json`
-> here so installing the plugin surfaces a *Connector setup required* banner.
+> **MCP connector (scaffold):** this plugin ships an [`.mcp.json`](.mcp.json) that describes the
+> proxy's live-command MCP server. A scaffold server lives in [`proxy-mcp/`](../../proxy-mcp) — the
+> target state is to run it as a connector so the live-command tools are natively discoverable and
+> governed (approval gates, tool selection). Until it's deployed, the existing REST proxy (URL + API
+> key via Team Onboarding) remains the working path.
 
 ## Skills
 

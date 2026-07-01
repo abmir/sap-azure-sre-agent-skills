@@ -13,10 +13,11 @@ All environment-specific values (proxy URL, API key, SAP landscape) are provided
 
 ## Infrastructure Requirements
 
-This skill **requires an SRE Proxy** in the `## Deployed Infrastructure` section of Team Onboarding.
+This skill **requires the SRE Proxy** (live-command broker) — reachable **either** as an **MCP connector** (preferred) **or** the legacy REST proxy listed in the `## Deployed Infrastructure` section of Team Onboarding.
 
-- **If no SRE Proxy is listed** — Respond exactly: "Live VM commands require the SRE Proxy (Container App). No SRE Proxy is listed in Deployed Infrastructure. Run `infra/deploy-sre-infra.ps1 -Mode Full` to deploy the proxy, then re-paste team onboarding with the proxy URL and API key. Until then, this skill is unavailable." Then stop. Do NOT attempt to call any proxy URL.
-- **If SRE Proxy is listed** — Run the full flow below using the proxy URL and API key from Team Onboarding.
+- **Preferred — `sap-sre-proxy` MCP connector configured** (from the `sap-sre-proxy-ops` plugin's `.mcp.json`): call its tools directly — `list_allowed_commands`, `run_command`, `run_batch`. The agent invokes these natively; no Python/HTTP needed.
+- **Fallback — REST SRE Proxy listed** in Deployed Infrastructure: use the proxy URL + API key with the Python flow below.
+- **Neither present** — Respond exactly: "Live VM commands require the SRE Proxy. Add the `sap-sre-proxy` MCP connector (see the `sap-sre-proxy-ops` plugin) or deploy the REST proxy with `infra/deploy-sre-infra.ps1 -Mode Full`, then re-paste team onboarding. Until then, this skill is unavailable." Then stop. Do NOT attempt any proxy URL.
 
 ## When to Use
 
@@ -38,7 +39,13 @@ Display command output **exactly as it appears on the VM** — preserve formatti
 
 ## Command Proxy
 
-The proxy uses **API key authentication** via the `X-API-Key` header. The API key is provided in Team Onboarding context. **IMPORTANT:** Always include `subscription_id` in the request body — the proxy runs in a different subscription than the SAP VMs.
+**Preferred path — MCP connector.** If the `sap-sre-proxy` MCP connector is configured, call its tools directly instead of the REST flow below:
+- `list_allowed_commands()` — discover the allowlist.
+- `run_command(vm, resource_group, command_id, sid, sidadm, instance)` — run one command.
+- `run_batch(vm, resource_group, command_ids, ...)` — run up to 6.
+Show the returned output verbatim. The MCP server enforces the same allowlist and runs commands under its own managed identity.
+
+**Fallback path — REST proxy.** Only if the MCP connector is not configured. The REST proxy uses **API key authentication** via the `X-API-Key` header (from Team Onboarding). **IMPORTANT:** always include `subscription_id` in the request body — the proxy runs in a different subscription than the SAP VMs.
 
 ```python
 import requests
