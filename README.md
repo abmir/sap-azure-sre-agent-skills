@@ -57,12 +57,14 @@ Each phase is independent — stop after any phase. Deeper detail lives in [docs
    | **Cost Management Reader** *(for cost skills)* | Cost, budgets, RI coverage | Subscription (rollups) or per-RG |
    | **Security Reader** *(optional)* | Defender for Cloud secure score / recommendations | Subscription |
 
+   **Easiest — let the portal grant it (recommended):** Settings → **Managed Resources** → **Add** your **subscription** (grants **Reader** sub-wide) and the specific **resource groups** — SAP app RGs, ACSS (`mrg-*`), and the AMS (`mrg-sapmon-*`) RG — at permission level **Reader**. Adding a resource group grants **Reader + Monitoring Reader + Log Analytics Reader** for you (keep **Reader**, *not* Privileged), and registers those resources with the agent. Use the `az` commands below only for scripting / at scale.
+
    **Scope — pick one:**
    - **A. Subscription (simplest):** grant the roles once at the **subscription**. The assignment **inherits to every resource — the subscription itself and all of its resource groups** — so you never enumerate RGs, and it also reaches the sources that exist only at subscription level (Service Health, cross-RG cost / RI, Defender).
    - **B. Resource-group only (least privilege):** if the customer won't grant at subscription scope, grant the roles on **every relevant RG** — SAP app RGs (`RG_SAP_*`), each ACSS/managed RG (`mrg-*`), and the AMS workspace RG (`mrg-sapmon-*`). Per-system skills work fully; you lose only the **subscription-only** sources above (the skills say so when asked). See [RBAC scoping](docs/reference.md#rbac-scoping--rg-only-vs-subscription) · [SRE Agent permissions](https://learn.microsoft.com/azure/sre-agent/permissions).
 
    <details>
-   <summary>Show the <code>az role assignment</code> commands</summary>
+   <summary>Prefer scripting? Show the <code>az role assignment</code> commands</summary>
 
    ```bash
    AGENT=<agent-mi-object-id>; SUB=<sub-id>
