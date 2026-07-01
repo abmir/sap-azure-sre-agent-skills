@@ -56,6 +56,43 @@ The custom role grants:
 
 ---
 
+## RBAC scoping — RG-only vs subscription
+
+Everything in the center of the architecture (health, cost, advisor, resource state, platform metrics, activity log, resource graph) is reached through the **agent's Managed Identity + Azure RBAC** — *not* through connectors. **Connectors** (AMS Log Analytics, Application Insights) only let the agent *query a telemetry store*; they are **additive**, not a substitute for RBAC.
+
+RBAC **scope = visibility**. If a customer grants read roles only on the SAP resource groups (not the whole subscription), most skills still work — **provided you grant on all relevant RGs**, not just the app RG:
+
+- SAP application RG(s) — `RG_SAP_*`
+- ACSS / managed RG(s) — `mrg-*` (VIS, disks, Key Vault often live here)
+- AMS workspace RG — `mrg-sapmon-*` (the Log Analytics workspace lives here, **not** in the app RG)
+- add **Cost Management Reader** on the same RGs for cost skills
+
+**Works fine at RG scope:**
+
+| Data source | Requires |
+|---|---|
+| VM state / disks / NIC / PPG / accel-net / zones (ARM) | Reader on the RG |
+| Azure Monitor **platform metrics** (CPU/mem/disk/network) | Monitoring Reader on the RG |
+| Resource Health (per-resource) | Reader on the RG |
+| Activity Log (that RG's events) | Reader on the RG |
+| Advisor recommendations (resources in the RG) | Reader on the RG |
+| Resource Graph | returns only resources you can read |
+| AMS / Log Analytics telemetry | Log Analytics Reader on the **AMS** RG + the workspace connector |
+
+**Needs subscription-scope `Reader` (else partial/blank — the skills disclose this):**
+
+| Data source | Why |
+|---|---|
+| **Service Health** (service issues, planned-maintenance advisories) | subscription-level feed |
+| Subscription-wide **cost / RI coverage** rollups | cost rolls up at subscription/billing scope |
+| **Defender for Cloud** secure score / posture | subscription-scoped |
+| Subscription-wide **Azure Policy** compliance | assignments evaluated at sub / MG scope |
+| **Auto-discovery** of *all* SAP systems | Resource Graph only sees granted RGs |
+
+**Recommendation:** grant **Reader + Monitoring Reader on all relevant RGs** (least privilege — covers every per-system skill). Add **subscription `Reader`** (read-only, low risk) only if the customer wants the sub-level sources above; otherwise the skills degrade gracefully and say so in the report header.
+
+---
+
 ## Security
 
 - **Command allowlist** — 14 read-only commands hardcoded in `proxy-mcp/server.py` (`ALLOWED_COMMANDS`) — no arbitrary shell execution

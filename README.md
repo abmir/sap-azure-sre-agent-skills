@@ -44,19 +44,22 @@ Each phase is independent — stop after any phase. Deeper detail lives in [docs
 ### Phase 0 — Azure-native · ~30 min · no infrastructure · 10 skills
 
 1. **Create the agent.** At [sre.azure.com](https://sre.azure.com) create an SRE Agent, enable its built-in **Tools** and **Skills** (Capabilities), and note its **Managed Identity** object ID (Identity blade).
-2. **Grant read access** on each SAP resource group (add **Cost Management Reader** at subscription scope for cost skills):
+2. **Grant read access (RBAC).** The agent reads Azure platform data — resource state, metrics, health, activity log, advisor, cost, resource graph — through its Managed Identity. Grant it read roles on **every relevant resource group**: your SAP app RG(s), the ACSS/managed RG(s) (`mrg-…`), and the AMS workspace RG (`mrg-sapmon-…`). Repeat both commands for each RG:
    ```bash
-   az role assignment create --assignee-object-id <agent-mi> --assignee-principal-type ServicePrincipal --role Reader             --scope /subscriptions/<sub>/resourceGroups/<SAP-RG>
-   az role assignment create --assignee-object-id <agent-mi> --assignee-principal-type ServicePrincipal --role "Monitoring Reader" --scope /subscriptions/<sub>/resourceGroups/<SAP-RG>
+   az role assignment create --assignee-object-id <agent-mi> --assignee-principal-type ServicePrincipal --role Reader             --scope /subscriptions/<sub>/resourceGroups/<RG>
+   az role assignment create --assignee-object-id <agent-mi> --assignee-principal-type ServicePrincipal --role "Monitoring Reader" --scope /subscriptions/<sub>/resourceGroups/<RG>
    ```
-   **If you use AMS**, also grant the agent access to the AMS Log Analytics workspace — it lives in a *different* resource group (e.g. `mrg-sapmon-…`), and without this the HANA/OS/cluster health layers come back empty:
-   ```bash
-   az role assignment create --assignee-object-id <agent-mi> --assignee-principal-type ServicePrincipal --role "Log Analytics Reader" --scope /subscriptions/<sub>/resourceGroups/<AMS-RG>
-   ```
-3. **Connect the repo.** Builder → **Code Access** → connect your fork (skills' source + knowledge base).
-4. **Install skills.** Builder → **Plugins** → install **`sap-sre-core`**.
-5. **Onboard.** Settings → **Team Onboarding** → paste your filled [onboarding template](onboarding/team-onboarding.template.md) (systems, subscription, AMS workspace).
-6. **Try it:** *"What SAP systems do I have?"* · *"Is AB1 healthy?"* · *"How much does AB1 cost?"*
+   - **Cost skills:** add **Cost Management Reader** (RG scope works; subscription scope adds cross-RG rollups + RI coverage).
+   - **Optional — subscription Reader:** grant `Reader` at **subscription** scope only if you want **Service Health**, subscription-wide cost/RI, **Defender** secure score, or **auto-discovery of all SAP systems**. Skip it and those degrade gracefully — per-system skills still work. Details: [RBAC scoping](docs/reference.md#rbac-scoping--rg-only-vs-subscription).
+3. **Add telemetry connectors.** Builder → **Connectors**:
+   - **AMS Log Analytics workspace** — required for the HANA / OS / cluster health layers (the agent queries it by workspace ID).
+   - **Application Insights** *(optional)* — only if your app tier emits to it; it's **additive** to AMS/ARM, not a replacement.
+
+   > Connectors let the agent *query telemetry stores*; **RBAC (step 2) is what unlocks the rest** — health, cost, advisor, resource state, and platform metrics.
+4. **Connect the repo.** Builder → **Code Access** → connect your fork (skills' source + knowledge base).
+5. **Install skills.** Builder → **Plugins** → install **`sap-sre-core`**.
+6. **Onboard.** Settings → **Team Onboarding** → paste your filled [onboarding template](onboarding/team-onboarding.template.md) (systems, subscription, AMS workspace).
+7. **Try it:** *"What SAP systems do I have?"* · *"Is AB1 healthy?"* · *"How much does AB1 cost?"*
 
 ### Phase 1 — Config store · ~1 hr · adds STAF validation + config-enriched RCA/perf/HA · +1 skill
 
