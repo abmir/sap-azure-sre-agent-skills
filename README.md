@@ -90,7 +90,7 @@ STAF check definitions live in the public [`Azure/sap-automation-qa`](https://gi
 ## Adoption Tiers
 
 The agent supports three deployment tiers. Each tier is a strict superset of the previous one — start with Azure-native, add a config store when you need config-level visibility, add the proxy when you're ready for live commands. Skills auto-detect what's available from the `## Deployed Infrastructure` section in Team Onboarding — no mode numbers to manage.
-
+con
 > **These three tiers are *presets*, not a rigid ladder.** Every box in the [architecture](#architecture) is **independently optional** and can be adopted in any **phase**. If you want to mix and match — e.g. collect configs to storage but *not* deploy the proxy, keep SAP telemetry in SAP Cloud ALM / Focus Run for now, or defer ServiceNow — see the [Adoption planner](#adoption-planner--mix--match-by-phase) below.
 
 | Tier | What's Deployed | Capabilities | Customer Profile | Effort |

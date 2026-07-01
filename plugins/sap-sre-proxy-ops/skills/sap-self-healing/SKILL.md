@@ -19,7 +19,7 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 **Data Reuse (AAU Optimization)**: Before calling any API or proxy, check if the data was already retrieved earlier in this conversation. Reuse landscape registry, VM power states, config files, and AMS query results from context. Do not re-fetch data that is already available.
 
-**Proxy Fallback**: If the config proxy or command proxy returns an error (timeout, 5xx, unreachable), inform the user and continue with Azure-native data sources only (AMS, ARM API, Azure Monitor). Do not block the entire skill on a proxy failure.
+**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. The SRE Proxy is optional and runs only **live VM commands** (this skill's remediation actions require it); if it is not deployed or errors (timeout, 5xx, unreachable), continue with stored blob configs + Azure-native sources (AMS, ARM API, Azure Monitor). Never block the skill on the proxy.
 
 ## Infrastructure Requirements
 
@@ -67,8 +67,9 @@ from datetime import datetime, timedelta, timezone
 # SUB_ID: Use subscription_id from Team Onboarding
 # AMS_WORKSPACE_ID: Use ams_workspace_id from Team Onboarding
 
-# PROXY_URL: Use config_proxy_url from Team Onboarding
-# PROXY_KEY: Use config_proxy_api_key from Team Onboarding
+# PROXY_URL / PROXY_KEY: required for this skill (live remediation commands via the SRE Proxy).
+#   Use proxy_url and proxy_api_key from Team Onboarding. Stored configs are read directly from
+#   the sap-configs blob (`az storage blob ... --auth-mode login`), not through the proxy.
 
 # All VM commands are executed via the SAP Command Executor skill
 # This skill determines WHAT to do, Command Executor does HOW

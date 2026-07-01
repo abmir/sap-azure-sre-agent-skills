@@ -17,7 +17,7 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 **Data Reuse (AAU Optimization)**: Before calling any API or proxy, check if the data was already retrieved earlier in this conversation. Reuse Advisor recommendations, landscape registry, VM properties, and ARG results from context.
 
-**Proxy Fallback**: If the config proxy or command proxy returns an error (timeout, 5xx, unreachable), inform the user and continue with Advisor + Azure-native data sources only. Do not block the entire skill on a proxy failure.
+**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. The SRE Proxy is optional and runs only **live VM commands**; if it is not deployed or errors (timeout, 5xx, unreachable), continue with Advisor + Azure-native sources. Never block the skill on the proxy.
 
 ## When to Use
 
@@ -39,7 +39,7 @@ The skill combines three data sources:
 
 2. **ARG gap-fill queries** (3 supplemental checks) — Resource locks, accelerated networking, and diagnostic settings are not covered by Advisor.
 
-3. **Landscape registry** (optional context) — If the config proxy is available, cross-reference Advisor findings with SAP system roles (DB, ASCS, PAS, ERS) for richer reporting.
+3. **Landscape registry** (optional context) — If the landscape inventory is available (Knowledge Base or the `sap-configs` blob), cross-reference Advisor findings with SAP system roles (DB, ASCS, PAS, ERS) for richer reporting.
 
 ## Execution Steps
 
