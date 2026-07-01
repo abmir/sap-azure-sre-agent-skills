@@ -90,7 +90,12 @@ Each phase is independent — stop after any phase. Deeper detail lives in [docs
    - **`config/`** — the **SAP landscape inventory** template + example (SIDs, resource groups, VMs, roles).
    - **`docs/`** — architecture, adoption planner, setup, and reference guides.
    - **`infra/`, `collector/`, `proxy-mcp/`** — the IaC, collector script, and MCP proxy code (for explaining or troubleshooting the deployment).
-5. **Install skills.** Builder → **Plugins** → install **`sap-sre-core`**.
+
+   > **Staying in sync:** Code Access **re-indexes on its own schedule** — pushes to your fork's `knowledge/`, `config/`, `docs/`, or `infra/` are picked up **automatically**, no manual step.
+5. **Install skills (Plugins).** Builder → **Plugins** → **Add marketplace** (your fork's URL) or **Install from URL**, then install **`sap-sre-core`** (the 10 Azure-native skills).
+   - **Where they live:** the tiered plugins in [`plugins/`](plugins/) — `sap-sre-core` (10), `sap-sre-config` (1), `sap-sre-proxy-ops` (2) — declared in [`.github/plugin/marketplace.json`](.github/plugin/marketplace.json); each skill is a `plugins/<plugin>/skills/<name>/SKILL.md`.
+   - **How import works:** installing copies the plugin **pinned to the exact commit** — a version-locked snapshot, not a live link.
+   - **How updates reach the agent:** merged changes do **not** arrive automatically (unlike Code Access). In **Plugins**, open the installed plugin and click **Update** — the portal shows a **SHA-256 diff** of the new commit vs. the installed one before you apply. Each agent updates on its own schedule, so you can stage a change on a test agent before promoting it. See [Updates & version pinning](docs/reference.md#updates--version-pinning).
 6. **Onboard.** Settings → **Team Onboarding** → paste your filled [onboarding template](onboarding/team-onboarding.template.md) (systems, subscription, AMS workspace).
 7. **Try it:** *"What SAP systems do I have?"* · *"Is AB1 healthy?"* · *"How much does AB1 cost?"*
 
