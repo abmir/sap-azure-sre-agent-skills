@@ -23,10 +23,10 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 ## Infrastructure Requirements
 
-This skill **requires an SRE Proxy** in the `## Deployed Infrastructure` section of Team Onboarding for any remediation action. Detection-only behavior works without the proxy, but the skill cannot autonomously fix anything without it.
+This skill **requires the SRE Proxy** for any remediation action — reachable **either** as the **`sap-sre-proxy` MCP connector** (preferred) **or** the legacy REST proxy in the `## Deployed Infrastructure` section of Team Onboarding. Detection-only behavior works without either, but the skill cannot autonomously fix anything without a live-command path.
 
-- **If no SRE Proxy is listed** — Respond exactly: "Automated self-healing requires the SRE Proxy (Container App). No SRE Proxy is listed in Deployed Infrastructure. I can DETECT issues from AMS / Activity Log / Azure Monitor but cannot REMEDIATE them without the proxy. Run `infra/deploy-sre-infra.ps1 -Mode Full` to enable remediation. Until then, this skill will only alert — not auto-act." Then stop. Do NOT attempt to invoke any proxy URL.
-- **If SRE Proxy is listed** — Run the full flow below. T4 guardrails apply (allowlist, rate limit, kill switch).
+- **If neither is present** — Respond exactly: "Automated self-healing requires the SRE Proxy. I can DETECT issues from AMS / Activity Log / Azure Monitor but cannot REMEDIATE without it. Add the `sap-sre-proxy` MCP connector (see the `sap-sre-proxy-ops` plugin) or deploy the REST proxy with `infra/deploy-sre-infra.ps1 -Mode Full`. Until then, this skill will only alert — not auto-act." Then stop. Do NOT attempt any proxy URL.
+- **If the MCP connector or REST proxy is present** — Run the full flow below. T4 guardrails apply (allowlist, rate limit, kill switch). Prefer the MCP tools (`run_command`) when the connector is configured.
 
 ## Tier: T4 — Autonomous Remediation
 

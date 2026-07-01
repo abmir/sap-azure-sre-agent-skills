@@ -17,15 +17,17 @@ It exposes the same **allowlisted, read-only** SAP VM commands as MCP tools:
 ## Status — SCAFFOLD
 
 `server.py` runs and exposes the tools (FastMCP, Streamable-HTTP), mirroring
-[`../proxy/app.py`](../proxy/app.py) `ALLOWED_COMMANDS`. Before production:
+[`../proxy/app.py`](../proxy/app.py) `ALLOWED_COMMANDS`. Deploy it with
+[`../infra/deploy-mcp-proxy.ps1`](../infra/deploy-mcp-proxy.ps1):
 
-1. **Deploy** as a VNet-integrated **Azure Container App** (reuse the patterns in
-   [`../infra/deploy-sre-infra.ps1`](../infra/deploy-sre-infra.ps1)); build from this folder's `Dockerfile`.
-2. **Identity/RBAC:** give it a managed identity with the custom **"SAP SRE Agent Operator"** role
-   on your SAP resource groups (read + `runCommand` only — see [`../infra/sap-sre-agent-role.json`](../infra/sap-sre-agent-role.json)).
-3. **Auth at the edge:** the connector sends the header from the plugin `.mcp.json`; also consider
-   Entra ID / managed-identity auth at ingress.
-4. **Harden:** timeouts, structured logging, error handling, and tests.
+```powershell
+../infra/deploy-mcp-proxy.ps1 -SubscriptionId <sub> -SapResourceGroups RG_SAP_CUS_AB1,RG_SAP_AB2
+```
+
+That script creates the resource group, a managed identity with the custom **"SAP SRE Agent
+Operator"** role on your SAP RGs, an ACR image build from this folder, a VNet-integrated Container
+App, and prints the **MCP URL + API key** to register as a connector. Before relying on it in
+production, still review: ingress auth hardening, timeouts, structured logging, and tests.
 
 ## Run locally
 
