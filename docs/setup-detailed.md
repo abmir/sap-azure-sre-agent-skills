@@ -217,21 +217,21 @@ Azure-Native (no infra deployed):
 | 3 | At sre.azure.com: "Run config checks for AB1" | STAF compliance report (skill pulled STAF YAML live from GitHub, compared against blob configs) |
 | 4 | At sre.azure.com: "How much does AB1 cost?" | Cost breakdown |
 
-+ Live Proxy (all Config Store tests above PLUS):
++ Live Commands (MCP command proxy deployed):
 
 | # | Test | Expected |
 |---|------|----------|
-| 5 | `curl https://<proxy>/api/health` | `{"status":"healthy"}` |
-| 6 | `curl -H "X-API-Key: <key>" https://<proxy>/api/diag` | MI token + ARM call both OK |
-| 7 | `curl -H "X-API-Key: <key>" https://<proxy>/api/configs/<sid>/<host>` | List of config files in blob (fallback path; skills with Storage Account read blob directly) |
-| 8 | At sre.azure.com: "Run uptime on AB1vm" | VM uptime via proxy |
+| 5 | `curl https://<proxy>/mcp` (no key) | Rejected — the MCP endpoint requires the `x-api-key` header |
+| 6 | In sre.azure.com → Connectors, the `sap-sre-proxy` connector shows **Connected** | Green / connected |
+| 7 | At sre.azure.com: "What commands are available?" | `list_allowed_commands` returns the 14-command allowlist |
+| 8 | At sre.azure.com: "Run uptime on AB1vm" | VM uptime via the MCP command proxy (`run_command`) |
 
 **Step 17: Verify Collector is Running (requires Storage Account)**
 
 ```powershell
-# Trigger fresh collection on a VM (without proxy — use az vm run-command; with proxy — POST /api/command with run_collector)
+# Trigger fresh collection on a VM (az vm run-command — no proxy needed)
 az vm run-command invoke -g <SAP-RG> -n <vm-name> --command-id RunShellScript `
-    --scripts "sudo /opt/sre/run-collector.sh && tail -20 /opt/sre/collector.log"
+    --scripts "sudo /opt/sre/collect-sap-configs.sh && tail -20 /opt/sre/collector.log"
 
 # Check the blob has fresh configs
 az storage blob list --account-name <storage> --container-name sap-configs `

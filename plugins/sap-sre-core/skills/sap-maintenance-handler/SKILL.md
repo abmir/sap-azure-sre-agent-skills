@@ -19,7 +19,7 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 **Data Reuse (AAU Optimization)**: Before calling any API or proxy, check if the data was already retrieved earlier in this conversation. Reuse landscape registry, VM power states, config files, and AMS query results from context. Do not re-fetch data that is already available.
 
-**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. the MCP command proxy is optional and runs only **live VM commands**; if it is not deployed or errors (timeout, 5xx, unreachable), continue with stored blob configs + Azure-native sources (AMS, ARM API, Azure Monitor). Never block the skill on the proxy.
+**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. The MCP command proxy is optional and runs only **live VM commands**; if it is not deployed or errors (timeout, 5xx, unreachable), continue with stored blob configs + Azure-native sources (AMS, ARM API, Azure Monitor). Never block the skill on the proxy.
 
 ## Infrastructure Requirements
 
@@ -52,41 +52,39 @@ This skill adapts automatically based on what infrastructure is listed in the `#
 - For Azure Resource Manager queries: Use the built-in `GetArmResourceAsJson` or `RunAzCliReadCommands` tools
 - For Log Analytics queries: Use the built-in `QueryLogAnalyticsByWorkspaceId` tool  
 - For metrics: Use the built-in `GetMetricTimeSeriesElementsForAzureResource` tool
-- For proxy HTTP calls: Use `ExecutePythonCode` with `X-API-Key` header (API key from Team Onboarding)
+- For live VM commands: invoke the **SAP Command Runner** skill (the `sap-sre-proxy` MCP connector) — never make direct HTTP or proxy calls
 
 ```python
-# Only use ExecutePythonCode for proxy HTTP calls. Use built-in tools for Azure API access.
-import requests, json
+# Use the built-in tools above for Azure API access.
+import json
 from datetime import datetime, timezone
 
 # SUB_ID: Use subscription_id from Team Onboarding
 
-# All VM commands are executed via the SAP Command Executor skill
-# This skill determines WHAT to do, Command Executor does HOW
-
-# PROXY_URL / PROXY_KEY: OPTIONAL — only when the MCP command proxy is deployed (live VM commands).
-#   Use proxy_url and proxy_api_key from Team Onboarding. Do NOT read stored configs here —
-#   read them directly from the sap-configs blob (`az storage blob ... --auth-mode login`).
+# All VM commands are executed via the SAP Command Runner skill (MCP run_command / run_batch).
+# This skill determines WHAT to do; SAP Command Runner does HOW. Never call the proxy directly.
+# Stored configs (pre-checks) are read directly from the sap-configs blob with the agent MI
+#   (`az storage blob ... --auth-mode login`) — only when a Storage Account is listed.
 ```
 
-**To execute VM commands**: Invoke the **SAP Command Executor** skill. Do NOT call the command proxy directly.
+**To execute VM commands**: Invoke the **SAP Command Runner** skill. Do NOT call the command proxy directly.
 
 Example invocations:
-- Stop SAP: invoke Command Executor with command_id=`sap_stop_graceful`, sidadm=`<sid>adm`, sid=`<SID>`
-- Stop HANA: invoke Command Executor with command_id=`hdb_stop`, sidadm=`<sid>adm`
-- Start HANA: invoke Command Executor with command_id=`hdb_start`, sidadm=`<sid>adm`
-- Start SAP: invoke Command Executor with command_id=`sap_start`, sidadm=`<sid>adm`, sid=`<SID>`
-- Cluster maintenance on: invoke Command Executor with command_id=`crm_maintenance_on`
-- Cluster maintenance off: invoke Command Executor with command_id=`crm_maintenance_off`
+- Stop SAP: invoke Command Runner with command_id=`sap_stop_graceful`, sidadm=`<sid>adm`, sid=`<SID>`
+- Stop HANA: invoke Command Runner with command_id=`hdb_stop`, sidadm=`<sid>adm`
+- Start HANA: invoke Command Runner with command_id=`hdb_start`, sidadm=`<sid>adm`
+- Start SAP: invoke Command Runner with command_id=`sap_start`, sidadm=`<sid>adm`, sid=`<SID>`
+- Cluster maintenance on: invoke Command Runner with command_id=`crm_maintenance_on`
+- Cluster maintenance off: invoke Command Runner with command_id=`crm_maintenance_off`
 
 ## Step 1: Check for Scheduled Events
 
-The agent checks Azure Scheduled Events API via the SAP Command Executor skill:
+The agent checks Azure Scheduled Events API via the SAP Command Runner skill:
 ```python
-# Invoke SAP Command Executor with command_id="scheduled_events"
+# Invoke SAP Command Runner with command_id="scheduled_events"
 # This reads http://169.254.169.254/metadata/scheduledevents on the VM
 def check_scheduled_events(vm_name, rg):
-    # Invoke SAP Command Executor skill
+    # Invoke SAP Command Runner skill
     pass
 ```
 
@@ -131,22 +129,22 @@ def determine_maintenance_action(vm_name, event_type, landscape):
 ## Step 3: Execute Graceful Shutdown
 
 For non-HA (AB1, AB3):
-1. Stop SAP: Invoke Command Executor with command_id=`sap_stop_graceful`, sidadm=`ab1adm`, sid=`AB1`
-2. Stop HANA: Invoke Command Executor with command_id=`hdb_stop`, sidadm=`db1adm`
+1. Stop SAP: Invoke Command Runner with command_id=`sap_stop_graceful`, sidadm=`ab1adm`, sid=`AB1`
+2. Stop HANA: Invoke Command Runner with command_id=`hdb_stop`, sidadm=`db1adm`
 3. Acknowledge event to Azure (starts countdown)
 4. Wait for reboot to complete (monitor VM power state via ARM)
-5. Start HANA: Invoke Command Executor with command_id=`hdb_start`, sidadm=`db1adm`
-6. Start SAP: Invoke Command Executor with command_id=`sap_start`, sidadm=`ab1adm`, sid=`AB1`
+5. Start HANA: Invoke Command Runner with command_id=`hdb_start`, sidadm=`db1adm`
+6. Start SAP: Invoke Command Runner with command_id=`sap_start`, sidadm=`ab1adm`, sid=`AB1`
 7. Validate: check process list, HANA availability
 
 For HA (HSO):
 1. Verify HSR is in sync (query AMS)
-2. Set maintenance mode: Invoke Command Executor with command_id=`crm_maintenance_on`
+2. Set maintenance mode: Invoke Command Runner with command_id=`crm_maintenance_on`
 3. Stop SAP on target node
 4. Stop HANA on target node (triggers automatic takeover to secondary)
 5. Acknowledge event
 6. After reboot: start HANA, re-register as secondary
-7. Bring node online: Invoke Command Executor with command_id=`crm_maintenance_off`
+7. Bring node online: Invoke Command Runner with command_id=`crm_maintenance_off`
 
 ## Step 4: Post-Maintenance Validation
 

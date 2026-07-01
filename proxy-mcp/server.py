@@ -3,19 +3,17 @@ SAP SRE command proxy — MCP server
 ======================================================
 
 Exposes the SAP live-command allowlist as **MCP tools** so the Azure SRE Agent can
-call them natively through a **connector** (Streamable-HTTP), instead of the bespoke
-REST + `X-API-Key` proxy in ../proxy/app.py.
+call them natively through a **connector** (Streamable-HTTP).
 
-Read-only, allowlisted commands only. Mirrors ../proxy/app.py `ALLOWED_COMMANDS` and its
-ARM run-command logic. This does NOT touch storage — config reads are done by the SRE
-Agent's own MI reading blob directly. This server only runs live VM commands.
+Read-only, allowlisted commands only. This does NOT touch storage — config reads are done
+by the SRE Agent's own MI reading blob directly. This server only runs live VM commands.
 
-STATUS: SCAFFOLD. It runs and exposes the tools, but before production you should:
-  • Deploy it as a VNet-integrated Azure Container App (reuse ../infra patterns).
-  • Assign it a managed identity with the custom "SAP SRE Agent Operator" role on the SAP RGs.
-  • Put a real auth story in front of it (the connector sends the header below; also
-    consider Entra ID / managed identity auth at the ingress).
-  • Harden timeouts, logging, and error handling.
+Deploy it with ../infra/deploy-mcp-proxy.ps1, which:
+  • Deploys it as a VNet-integrated Azure Container App.
+  • Assigns it a managed identity with the custom "SAP SRE Agent Operator" role on the SAP RGs.
+  • Wires the connector auth header (below). Before relying on it in production, also
+    consider Entra ID / managed identity auth at the ingress, and harden timeouts,
+    logging, and error handling.
 
 Run locally:  SUBSCRIPTION_ID=<sub> MCP_API_KEY=<key> python server.py
 Then register the URL as an MCP connector in the SRE Agent (see .mcp.json in the
@@ -46,9 +44,9 @@ def _arm_token() -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Allowlist — mirror of ../proxy/app.py ALLOWED_COMMANDS (read-only commands).
-# `deploy_collector` is intentionally NOT exposed here (collector deployment is an
-# operator task, not an agent tool).
+# Allowlist — read-only commands only. Collector deployment (`deploy_collector`) is
+# intentionally NOT exposed here — it is an operator task (az vm run-command), not an
+# agent tool.
 # ─────────────────────────────────────────────────────────────────────────────
 ALLOWED_COMMANDS = {
     "crm_mon": {"script": "crm_mon -r -1 2>&1", "description": "Pacemaker cluster status", "requires_sidadm": False},

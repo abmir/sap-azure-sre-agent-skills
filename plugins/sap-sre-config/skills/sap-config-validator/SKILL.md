@@ -78,7 +78,7 @@ az storage blob download-batch \
 ```
 
 If the blob list is empty or the newest file is older than 14 days, **stop and report**:
-*"No fresh collected configs found for `<SID>/<host>` in `<storage>/sap-configs`. The collector may not be installed on this VM. Trigger collection (if MCP command proxy is deployed: ask `sap-command-runner` to run `run_collector`; otherwise: `az vm run-command invoke -g <RG> -n <vm> --command-id RunShellScript --scripts 'sudo /opt/sre/run-collector.sh'`) and re-run this validation."*
+*"No fresh collected configs found for `<SID>/<host>` in `<storage>/sap-configs`. The collector may not be installed on this VM. Re-run the collector on the VM (`az vm run-command invoke -g <RG> -n <vm> --command-id RunShellScript --scripts 'sudo /opt/sre/collect-sap-configs.sh'`, or your config-management tool) so fresh configs land in the `sap-configs` blob, then re-run this validation."*
 
 ### Step 2 — Fetch STAF definitions and run the comparison
 

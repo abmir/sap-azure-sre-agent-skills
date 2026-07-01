@@ -19,11 +19,12 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 **Data Reuse (AAU Optimization)**: Before calling any API or proxy, check if the data was already retrieved earlier in this conversation. Reuse landscape registry, VM power states, config files, and AMS query results from context. Do not re-fetch data that is already available.
 
-**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. the MCP command proxy is optional and runs only **live VM commands**; if it is not deployed or errors (timeout, 5xx, unreachable), continue with stored blob configs + Azure-native sources (AMS, ARM API, Azure Monitor). Never block the skill on the proxy.
+**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. The MCP command proxy is optional and runs only **live VM commands**; if it is not deployed or errors (timeout, 5xx, unreachable), continue with stored blob configs + Azure-native sources (AMS, ARM API, Azure Monitor). Never block the skill on the proxy.
 
-## When to Use
-
-- "Is everything healthy?" / "Show SAP health"
+**Telemetry source adaptation**: HANA/OS/SAP-app depth depends on which telemetry source is listed in `## Deployed Infrastructure`. Adapt automatically — never hard-fail because a specific source is absent:
+- **AMS (Azure Monitor for SAP) listed** → use the AMS KQL tables below (deepest HANA/OS/cluster signals).
+- **No AMS, but an SAP APM connector is listed (SAP Cloud ALM / Focus Run / Dynatrace)** → invoke the SAP APM Connector for SAP-app/HANA signals; use Azure Monitor platform metrics for VM/infra.
+- **No SAP telemetry source at all** → use Azure platform metrics only (VM Insights, Azure Monitor, Resource Health) for VM-level CPU/memory/disk/network, and disclose in the header: "SAP-application-level telemetry is not configured; results use Azure platform metrics. Add AMS or an APM connector for HANA/SAP depth."
 - "Health check for AB1" / "Status of all systems"
 - "Any CPU or memory pressure on AB3 VMs?"
 - "Are there network issues between DB and App servers?"
@@ -39,7 +40,7 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 | AMS Log Analytics | Primary | 2-5 min | HANA availability, OS metrics, Pacemaker state, SAP processes |
 | Activity Log | Primary | Real-time | Recent changes |
 | **`sap-configs` blob (agent MI, direct)** | **Primary for stored configs** | Cron (weekly) | ethtool output, VM configs, accelerated networking — read **directly with the agent's own Managed Identity** (`az storage blob ... --auth-mode login`); **no proxy** |
-| Command proxy `/batch` (optional) | Live enrichment only | Live | Freshest ethtool / PPG / live VM state — **only if** the optional MCP command proxy is deployed |
+| MCP command proxy (run_batch, optional) | Live enrichment only | Live | Freshest ethtool / PPG / live VM state — **only if** the MCP command proxy is configured |
 
 ## Authentication
 
@@ -47,52 +48,21 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 - For Azure Resource Manager queries: Use the built-in `GetArmResourceAsJson` or `RunAzCliReadCommands` tools
 - For Log Analytics queries: Use the built-in `QueryLogAnalyticsByWorkspaceId` tool  
 - For metrics: Use the built-in `GetMetricTimeSeriesElementsForAzureResource` tool
-- For proxy HTTP calls: Use `ExecutePythonCode` with `X-API-Key` header (API key from Team Onboarding)
+- For live VM commands: invoke the **SAP Command Runner** skill (the `sap-sre-proxy` MCP connector) — never make direct HTTP or proxy calls
 
 ```python
-# Only use ExecutePythonCode for proxy HTTP calls. Use built-in tools for Azure API access.
-import requests, json
+# Use the built-in tools above for Azure API access.
+import json
 from datetime import datetime, timedelta, timezone
 
 # SUB_ID: Use subscription_id from Team Onboarding
-# AMS_WORKSPACE_ID: Use ams_workspace_id from Team Onboarding
-
-# PROXY_URL / PROXY_KEY: OPTIONAL — only when the MCP command proxy is deployed (live VM commands).
-#   Use proxy_url and proxy_api_key from Team Onboarding. Do NOT read stored configs here —
-#   read them directly from the sap-configs blob (`az storage blob ... --auth-mode login`).
-
-# COMMAND_PROXY_URL: Use command_proxy_url from Team Onboarding
-# COMMAND_PROXY_KEY: Use command_proxy_api_key from Team Onboarding
-
-def get_landscape_registry():
-    resp = requests.get(f"{PROXY_URL}/api/registry", headers={"x-api-key": PROXY_KEY}, timeout=30)
-    return resp.json() if resp.status_code == 200 else None
-
-def get_vm_data_live(vm_name, rg, commands):
-    """Fetch VM data via command proxy batch (live, primary source)."""
-    resp = requests.post(f"{COMMAND_PROXY_URL}/batch",
-        headers={"x-api-key": COMMAND_PROXY_KEY, "Content-Type": "application/json"},
-        json={"vm": vm_name, "rg": rg, "commands": commands}, timeout=180)
-    if resp.status_code == 200:
-        results = {r["id"]: r["output"] for r in resp.json().get("results", [])}
-        return {"source": "live", "data": results, "timestamp": datetime.now(timezone.utc).isoformat()}
-    return None
-
-def get_vm_configs_fallback(sid, hostname):
-    """Fallback: fetch VM config data from blob (stale, 4-6h old)."""
-    resp = requests.get(f"{PROXY_URL}/api/configs/{sid}/{hostname}", headers={"x-api-key": PROXY_KEY}, timeout=60)
-    if resp.status_code == 200:
-        data = resp.json()
-        return {"source": "blob", "data": data.get("files", {}), "timestamp": data.get("last_modified", "unknown")}
-    return {"source": "none", "data": {}, "timestamp": None}
-
-def get_vm_data(vm_name, rg, sid, hostname, commands):
-    """Try live command proxy first, fall back to blob."""
-    live = get_vm_data_live(vm_name, rg, commands)
-    if live:
-        return live
-    return get_vm_configs_fallback(sid, hostname)
+# AMS_WORKSPACE_ID: Use ams_workspace_id from Team Onboarding (only if AMS is listed)
 ```
+
+**Getting VM data (adaptive — no dead endpoints):**
+- **Stored configs** (accelerated networking, ethtool, VM configs) — read **directly** from the `sap-configs` blob with the agent's own MI: `RunAzCliReadCommands` → `az storage blob download --auth-mode login --account-name <sa> --container-name sap-configs --name <SID>/<host>/latest/...`. Available whenever a **Storage Account** is listed.
+- **Live VM state** (freshest ethtool / PPG / uptime) — only when the **MCP command proxy** is configured: invoke the **SAP Command Runner** skill (`run_batch`) with the health commands below. If it is not configured or errors, silently use the stored blob configs. Never block on it.
+- **Landscape inventory** — read from the agent Knowledge Base (primary) or the `sap-configs` blob directly. There is **no** `/api/registry` endpoint — the proxy is MCP (live commands only).
 
 **Standard commands for health checks**:
 ```python

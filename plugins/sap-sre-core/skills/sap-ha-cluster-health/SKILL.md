@@ -20,7 +20,7 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 **Data Reuse (AAU Optimization)**: Before calling any API or proxy, check if the data was already retrieved earlier in this conversation. Reuse landscape registry, VM power states, config files, and AMS query results from context. Do not re-fetch data that is already available.
 
-**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. the MCP command proxy is optional and runs only **live VM commands**; if it is not deployed or errors (timeout, 5xx, unreachable), continue with stored blob configs + Azure-native sources (AMS, ARM API, Azure Monitor). Never block the skill on the proxy.
+**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. The MCP command proxy is optional and runs only **live VM commands**; if it is not deployed or errors (timeout, 5xx, unreachable), continue with stored blob configs + Azure-native sources (AMS, ARM API, Azure Monitor). Never block the skill on the proxy.
 
 ## Infrastructure Requirements
 
@@ -53,7 +53,7 @@ This section covers what **deployed infrastructure** (Storage Account / MCP comm
 
 | Source | Primary/Fallback | Freshness | Used For |
 |--------|-----------------|-----------|----------|
-| **Command proxy `/batch`** | **PRIMARY** | **Live** | **crm_mon output, SAPHanaSR-showAttr, global.ini HA hooks, cluster properties** |
+| **MCP command proxy (run_batch)** | **Primary when configured** | **Live** | **crm_mon output, SAPHanaSR-showAttr, global.ini HA hooks, cluster properties** |
 | AMS: `Prometheus_HaClusterExporter_CL` | Primary | 2-5 min | Live node/resource status, fail-counts |
 | AMS: `SapHana_SystemReplication_CL` | Primary | 2-5 min | HSR sync state, mode, lag |
 | Blob: `crm-status.txt` | Fallback | Cron (4-6h) | Full Pacemaker config — **only if command proxy fails** |
@@ -69,57 +69,33 @@ This section covers what **deployed infrastructure** (Storage Account / MCP comm
 - For Azure Resource Manager queries: Use the built-in `GetArmResourceAsJson` or `RunAzCliReadCommands` tools
 - For Log Analytics queries: Use the built-in `QueryLogAnalyticsByWorkspaceId` tool  
 - For metrics: Use the built-in `GetMetricTimeSeriesElementsForAzureResource` tool
-- For proxy HTTP calls: Use `ExecutePythonCode` with `X-API-Key` header (API key from Team Onboarding)
+- For live VM commands: invoke the **SAP Command Runner** skill (the `sap-sre-proxy` MCP connector) — never make direct HTTP or proxy calls
 
 ```python
-# Only use ExecutePythonCode for proxy HTTP calls. Use built-in tools for Azure API access.
-import requests, json, re
+# Use the built-in tools above for Azure API access.
+import json, re
 from datetime import datetime, timedelta, timezone
 
-# SUB_ID: Use subscription_id from Team Onboarding
-# AMS_WORKSPACE_ID: Use ams_workspace_id from Team Onboarding
+# SUB_ID / AMS_WORKSPACE_ID: from Team Onboarding (AMS only if it is listed)
 
-# PROXY_URL / PROXY_KEY: OPTIONAL — only when the MCP command proxy is deployed (live VM commands).
-#   Use proxy_url and proxy_api_key from Team Onboarding. Do NOT read stored configs here —
-#   read them directly from the sap-configs blob (`az storage blob ... --auth-mode login`).
+# Live cluster/HSR data comes ONLY from the MCP command proxy, invoked via the SAP Command
+# Runner skill (run_batch). Never call the proxy directly. When the proxy is not configured,
+# fall back to blob configs + AMS (see the Data Sources table). When T3 mode needs to
+# remediate, invoke the SAP Command Runner skill.
 
-# COMMAND_PROXY_URL: Use command_proxy_url from Team Onboarding
-# COMMAND_PROXY_KEY: Use command_proxy_api_key from Team Onboarding
+# Allowlisted read-only commands to request via SAP Command Runner (run_batch):
+HA_COMMANDS = [
+    {"id": "crm_status", "cmd": "crm_mon -1 --output-as=text 2>/dev/null || crm status"},
+    {"id": "saphanasr_showattr", "cmd": "SAPHanaSR-showAttr 2>/dev/null || echo 'N/A'"},
+    {"id": "global_ini_hooks", "cmd": "grep -A5 '\\[ha_dr_provider' /hana/shared/*/global/hdb/custom/config/global.ini 2>/dev/null || echo 'N/A'"},
+    {"id": "hsr_state", "cmd": "su - $(ls /hana/shared/ | head -1 | tr '[:upper:]' '[:lower:]')adm -c 'python /usr/sap/*/HDB*/exe/python_support/systemReplicationStatus.py' 2>/dev/null || echo 'N/A'"},
+    {"id": "crm_config", "cmd": "cibadmin --query --scope crm_config 2>/dev/null | grep -E 'stonith-enabled|stonith-action|stonith-timeout|concurrent-fencing' || echo 'N/A'"},
+]
 
-# VM commands are executed via the SAP Command Executor skill (never directly)
-# When T3 mode needs to remediate, instruct the agent to invoke SAP Command Executor
-
-def get_ha_data_live(vm_name, rg):
-    """Fetch HA/DR data from VM via command proxy batch (live, primary source)."""
-    commands = [
-        {"id": "crm_status", "cmd": "crm_mon -1 --output-as=text 2>/dev/null || crm status"},
-        {"id": "saphanasr_showattr", "cmd": "SAPHanaSR-showAttr 2>/dev/null || echo 'N/A'"},
-        {"id": "global_ini_hooks", "cmd": "grep -A5 '\\[ha_dr_provider' /hana/shared/*/global/hdb/custom/config/global.ini 2>/dev/null || echo 'N/A'"},
-        {"id": "hsr_state", "cmd": "su - $(ls /hana/shared/ | head -1 | tr '[:upper:]' '[:lower:]')adm -c 'python /usr/sap/*/HDB*/exe/python_support/systemReplicationStatus.py' 2>/dev/null || echo 'N/A'"},
-        {"id": "crm_config", "cmd": "cibadmin --query --scope crm_config 2>/dev/null | grep -E 'stonith-enabled|stonith-action|stonith-timeout|concurrent-fencing' || echo 'N/A'"},
-    ]
-    resp = requests.post(f"{COMMAND_PROXY_URL}/batch",
-        headers={"x-api-key": COMMAND_PROXY_KEY, "Content-Type": "application/json"},
-        json={"vm": vm_name, "rg": rg, "commands": commands}, timeout=180)
-    if resp.status_code == 200:
-        results = {r["id"]: r["output"] for r in resp.json().get("results", [])}
-        return {"source": "live", "data": results, "timestamp": datetime.now(timezone.utc).isoformat()}
-    return None
-
-def get_ha_data_blob(sid, hostname):
-    """Fallback: fetch HA/DR data from blob config files (stale, 4-6h old)."""
-    resp = requests.get(f"{PROXY_URL}/api/configs/{sid}/{hostname}", headers={"x-api-key": PROXY_KEY}, timeout=60)
-    if resp.status_code == 200:
-        data = resp.json()
-        return {"source": "blob", "data": data.get("files", {}), "timestamp": data.get("last_modified", "unknown")}
-    return {"source": "none", "data": {}, "timestamp": None}
-
-def get_ha_data(vm_name, rg, sid, hostname):
-    """Try live command proxy first, fall back to blob."""
-    live = get_ha_data_live(vm_name, rg)
-    if live:
-        return live
-    return get_ha_data_blob(sid, hostname)
+# Stored fallback configs (crm-status.txt, saphanasr-showattr.txt, corosync.conf, global.ini)
+# are read directly from the sap-configs blob with the agent MI:
+#   az storage blob download --auth-mode login --account-name <sa> --container-name sap-configs \
+#     --name <SID>/<host>/latest/cluster/<file>
 ```
 
 ## T1 Mode: Cluster + HSR Status
@@ -137,17 +113,17 @@ Prometheus_HaClusterExporter_CL
 |----|-------|---------------|----------|
 | HSR-001 | HSR sync state (ACTIVE/ERROR) | AMS `SapHana_SystemReplication_CL` | — |
 | HSR-002 | Replication mode (sync/syncmem/async) | AMS | — |
-| HSR-003 | SAPHanaSR-showAttr sync_state (SOK/SFAIL) | **Command proxy: `saphanasr_showattr`** | Blob `saphanasr-showattr.txt` |
-| HSR-004 | Operation mode (logreplay/delta_datashipping) | **Command proxy: `saphanasr_showattr`** | Blob |
-| HSR-005 | SR hook provider in global.ini | **Command proxy: `global_ini_hooks`** | Blob `global.ini` |
-| HSR-006 | AUTOMATED_REGISTER = true | **Command proxy: `crm_status`** | Blob `crm-status.txt` |
-| HSR-007 | PREFER_SITE_TAKEOVER = true | **Command proxy: `crm_status`** | Blob `crm-status.txt` |
+| HSR-003 | SAPHanaSR-showAttr sync_state (SOK/SFAIL) | **MCP proxy: `saphanasr_showattr`** | Blob `saphanasr-showattr.txt` |
+| HSR-004 | Operation mode (logreplay/delta_datashipping) | **MCP proxy: `saphanasr_showattr`** | Blob |
+| HSR-005 | SR hook provider in global.ini | **MCP proxy: `global_ini_hooks`** | Blob `global.ini` |
+| HSR-006 | AUTOMATED_REGISTER = true | **MCP proxy: `crm_status`** | Blob `crm-status.txt` |
+| HSR-007 | PREFER_SITE_TAKEOVER = true | **MCP proxy: `crm_status`** | Blob `crm-status.txt` |
 | HSR-008 | Pacemaker SAPHana resource state | AMS | — |
 | HSR-009 | VM availability (both nodes) | Azure Monitor | — |
 | HSR-010 | Data freshness (last AMS record) | AMS | — |
 
 **Data source tagging**: Always include in output which source was used:
-- `Source: ✅ Live` — command proxy batch succeeded
+- `Source: ✅ Live` — MCP command proxy (run_batch) succeeded
 - `Source: ⚠️ Blob (stale, <timestamp>)` — fallback to cron-collected data
 
 ## T1 Forensic Mode: Failure Timeline
@@ -173,7 +149,7 @@ When SFAIL, quorum loss, or increasing fail-counts detected:
    - Failed resource → "Cleanup: `crm resource cleanup <rsc>`"
    - Node in standby → "Bring online: `crm node online <node>`"
 4. **Approval**: Send Teams card with diagnosis + recommended action
-5. **Execute**: On approval, invoke the **SAP Command Executor** skill:
+5. **Execute**: On approval, invoke the **SAP Command Runner** skill:
    - For failed resource cleanup: command_id=`crm_cleanup`, vm=<node>, rg=<rg>
    - For node standby: command_id=`crm_maintenance_on`, vm=<node>, rg=<rg>
    - For node online: command_id=`crm_maintenance_off`, vm=<node>, rg=<rg>

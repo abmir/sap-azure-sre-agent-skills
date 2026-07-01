@@ -23,7 +23,12 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 **Data Reuse (AAU Optimization)**: Before calling any API or proxy, check if the data was already retrieved earlier in this conversation. Reuse landscape registry, VM power states, config files, and AMS query results from context. Do not re-fetch data that is already available.
 
-**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. the MCP command proxy is optional and runs only **live VM commands**; if it is not deployed or errors (timeout, 5xx, unreachable), continue with stored blob configs + Azure-native sources (AMS, ARM API, Azure Monitor). Never block the skill on the proxy.
+**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. The MCP command proxy is optional and runs only **live VM commands**; if it is not deployed or errors (timeout, 5xx, unreachable), continue with stored blob configs + Azure-native sources (AMS, ARM API, Azure Monitor). Never block the skill on the proxy.
+
+**Telemetry & incident-platform adaptation**: This skill adapts to whichever telemetry and incident platform are listed in `## Deployed Infrastructure`:
+- **Telemetry** — AMS if listed (deepest); else an SAP APM connector (SAP Cloud ALM / Focus Run / Dynatrace) if listed; else Azure platform metrics + Activity Log only. Disclose the reduced fidelity in the report header when AMS/APM are absent.
+- **Change correlation** — always Azure Activity Log; **also** ServiceNow changes if a ServiceNow connector is listed.
+- **Incident creation** — if an incident platform (ServiceNow) is listed, create/update the incident with the RCA payload; otherwise send the RCA via Teams/Outlook only. Never fail because a platform is absent.
 
 ## Infrastructure Requirements
 
@@ -63,20 +68,23 @@ If Layer 1 (Azure Infrastructure) is RED, that's the root cause — upper layers
 - For Azure Resource Manager queries: Use the built-in `GetArmResourceAsJson` or `RunAzCliReadCommands` tools
 - For Log Analytics queries: Use the built-in `QueryLogAnalyticsByWorkspaceId` tool  
 - For metrics: Use the built-in `GetMetricTimeSeriesElementsForAzureResource` tool
-- For proxy HTTP calls: Use `ExecutePythonCode` with `X-API-Key` header (API key from Team Onboarding)
+- For live VM commands: invoke the **SAP Command Runner** skill (the `sap-sre-proxy` MCP connector) — never make direct HTTP or proxy calls
 
 ```python
-# Only use ExecutePythonCode for proxy HTTP calls. Use built-in tools for Azure API access.
-import requests, json
+# Use the built-in tools above for Azure API access.
+import json
 from datetime import datetime, timedelta, timezone
 
 # SUB_ID: Use subscription_id from Team Onboarding
-# AMS_WORKSPACE_ID: Use ams_workspace_id from Team Onboarding
+# AMS_WORKSPACE_ID: Use ams_workspace_id from Team Onboarding (only if AMS is listed)
+
+# Live VM/OS state at incident time (optional): invoke the SAP Command Runner skill
+# (MCP run_command / run_batch) — only when the MCP command proxy is configured.
 
 # Conditional integrations — invoked as separate skills when available
-# SAP ServiceNow Connector: queries changes, creates incidents (only if SNOW configured)
-# SAP APM Connector: pulls Dynatrace/Focus Run HANA telemetry (only if configured)
-# When not configured, fall back to Azure Activity Log and AMS data respectively
+# SAP ServiceNow Connector: queries changes, creates incidents (only if ServiceNow configured)
+# SAP APM Connector: pulls Dynatrace / SAP Cloud ALM / Focus Run HANA telemetry (only if configured)
+# When not configured, fall back to Azure Activity Log and AMS (or Azure platform metrics) respectively
 ```
 
 ## RCA Procedure

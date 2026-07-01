@@ -21,9 +21,12 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 **Data Reuse (AAU Optimization)**: Before calling any API or proxy, check if the data was already retrieved earlier in this conversation. Reuse landscape registry, VM power states, config files, and AMS query results from context. Do not re-fetch data that is already available.
 
-**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. the MCP command proxy is optional and runs only **live VM commands**; if it is not deployed or errors (timeout, 5xx, unreachable), continue with stored blob configs + Azure-native sources (AMS, ARM API, Azure Monitor). Never block the skill on the proxy.
+**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. The MCP command proxy is optional and runs only **live VM commands**; if it is not deployed or errors (timeout, 5xx, unreachable), continue with stored blob configs + Azure-native sources (AMS, ARM API, Azure Monitor). Never block the skill on the proxy.
 
-## Tier: T3 — Predictive Prevention (Semi-Autonomous)
+**Telemetry source adaptation**: Forecasting depth depends on which telemetry source is listed in `## Deployed Infrastructure`. Adapt automatically — never hard-fail because a specific source is absent:
+- **AMS (Azure Monitor for SAP) listed** → forecast from the AMS KQL series below (HANA memory, MVCC, HSR lag).
+- **No AMS, but an SAP APM connector is listed (SAP Cloud ALM / Focus Run / Dynatrace)** → pull HANA memory/lag series from the SAP APM Connector; use Azure Monitor for disk/CPU trends.
+- **No SAP telemetry source at all** → forecast only Azure platform metrics (disk %, VM CPU/memory) and disclose: "HANA-internal trends need AMS or an APM connector; forecasting is limited to Azure platform metrics."
 
 ## Mode Selection
 
@@ -45,25 +48,19 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 - For Azure Resource Manager queries: Use the built-in `GetArmResourceAsJson` or `RunAzCliReadCommands` tools
 - For Log Analytics queries: Use the built-in `QueryLogAnalyticsByWorkspaceId` tool  
 - For metrics: Use the built-in `GetMetricTimeSeriesElementsForAzureResource` tool
-- For proxy HTTP calls: Use `ExecutePythonCode` with `X-API-Key` header (API key from Team Onboarding)
+- For live VM commands: invoke the **SAP Command Runner** skill (the `sap-sre-proxy` MCP connector) — never make direct HTTP or proxy calls
 
 ```python
-# Only use ExecutePythonCode for proxy HTTP calls. Use built-in tools for Azure API access.
-import requests, json, math
+# Use the built-in tools above for Azure API access.
+import json, math
 from datetime import datetime, timedelta, timezone
 
 # SUB_ID: Use subscription_id from Team Onboarding
-# AMS_WORKSPACE_ID: Use ams_workspace_id from Team Onboarding
+# AMS_WORKSPACE_ID: Use ams_workspace_id from Team Onboarding (only if AMS is listed)
 
-# PROXY_URL / PROXY_KEY: OPTIONAL — only when the MCP command proxy is deployed (live VM commands).
-#   Use proxy_url and proxy_api_key from Team Onboarding. Do NOT read stored configs here —
-#   read them directly from the sap-configs blob (`az storage blob ... --auth-mode login`).
-
-# COMMAND_PROXY_URL: Use command_proxy_url from Team Onboarding
-# COMMAND_PROXY_KEY: Use command_proxy_api_key from Team Onboarding
-
-# VM commands are executed via the SAP Command Executor skill (never directly)
-# When T3 mode needs to act on a recommendation, invoke SAP Command Executor
+# Live VM state (e.g. df -h) is optional: invoke the SAP Command Runner skill (MCP run_batch)
+# only when the MCP command proxy is configured. Otherwise use Azure Monitor disk % / blob configs.
+# When T3 mode needs to act on a recommendation, invoke the SAP Command Runner skill — never call the proxy directly.
 ```
 
 ## Forecasting Metrics
@@ -71,7 +68,7 @@ from datetime import datetime, timedelta, timezone
 | Metric | Primary Source | Fallback Source | Query Window | Alert Threshold |
 |--------|---------------|-----------------|-------------|-----------------|
 | HANA memory utilization | `SapHana_LoadHistory_CL` | — | 7 days | Projected OOM within 72h |
-| /hana/log utilization | **Command proxy batch: `df -h`** | Azure Monitor disk % or blob `df` | 7 days | Projected full within 48h |
+| /hana/log utilization | **MCP proxy (run_batch: `df -h`)** | Azure Monitor disk % or blob `df` | 7 days | Projected full within 48h |
 | /hana/data utilization | Azure Monitor disk % | — | 7 days | Projected full within 72h |
 | Host CPU trend | `SapHana_LoadHistory_CL` | — | 7 days | Sustained >90% for 4h+ |
 | HSR replication lag | `SapHana_SystemReplication_CL` | — | 24h | Increasing trend (lag growing) |

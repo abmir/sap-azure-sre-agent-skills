@@ -20,7 +20,12 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 **Data Reuse (AAU Optimization)**: Before calling any API or proxy, check if the data was already retrieved earlier in this conversation. Reuse landscape registry, VM power states, config files, and AMS query results from context. Do not re-fetch data that is already available.
 
-**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. the MCP command proxy is optional and runs only **live VM commands**; if it is not deployed or errors (timeout, 5xx, unreachable), continue with stored blob configs + Azure-native sources (AMS, ARM API, Azure Monitor). Never block the skill on the proxy.
+**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. The MCP command proxy is optional and runs only **live VM commands**; if it is not deployed or errors (timeout, 5xx, unreachable), continue with stored blob configs + Azure-native sources (AMS, ARM API, Azure Monitor). Never block the skill on the proxy.
+
+**Telemetry source adaptation**: HANA/OS/SAP-app depth depends on which telemetry source is listed in `## Deployed Infrastructure`. Adapt automatically — never hard-fail because a specific source is absent:
+- **AMS (Azure Monitor for SAP) listed** → use the AMS KQL tables below (deepest HANA/OS signals).
+- **No AMS, but an SAP APM connector is listed (SAP Cloud ALM / Focus Run / Dynatrace)** → invoke the SAP APM Connector for HANA/SAP-app signals; use Azure Monitor platform metrics for VM/storage.
+- **No SAP telemetry source at all** → use Azure platform metrics only (Azure Monitor disk IOPS/latency, VM CPU/memory) and disclose in the header: "HANA/SAP-application telemetry is not configured; results use Azure platform metrics only. Add AMS or an APM connector for HANA depth."
 
 ## Infrastructure Requirements
 
@@ -47,52 +52,21 @@ This skill adapts automatically based on what infrastructure is listed in the `#
 - For Azure Resource Manager queries: Use the built-in `GetArmResourceAsJson` or `RunAzCliReadCommands` tools
 - For Log Analytics queries: Use the built-in `QueryLogAnalyticsByWorkspaceId` tool  
 - For metrics: Use the built-in `GetMetricTimeSeriesElementsForAzureResource` tool
-- For proxy HTTP calls: Use `ExecutePythonCode` with `X-API-Key` header (API key from Team Onboarding)
+- For live VM commands: invoke the **SAP Command Runner** skill (the `sap-sre-proxy` MCP connector) — never make direct HTTP or proxy calls
 
 ```python
-# Only use ExecutePythonCode for proxy HTTP calls. Use built-in tools for Azure API access.
-import requests, json
+# Use the built-in tools above for Azure API access.
+import json
 from datetime import datetime, timedelta, timezone
 
 # SUB_ID: Use subscription_id from Team Onboarding
-# AMS_WORKSPACE_ID: Use ams_workspace_id from Team Onboarding
-
-# PROXY_URL / PROXY_KEY: OPTIONAL — only when the MCP command proxy is deployed (live VM commands).
-#   Use proxy_url and proxy_api_key from Team Onboarding. Do NOT read stored configs here —
-#   read them directly from the sap-configs blob (`az storage blob ... --auth-mode login`).
-
-# COMMAND_PROXY_URL: Use command_proxy_url from Team Onboarding
-# COMMAND_PROXY_KEY: Use command_proxy_api_key from Team Onboarding
-
-def get_landscape_registry():
-    resp = requests.get(f"{PROXY_URL}/api/registry", headers={"x-api-key": PROXY_KEY}, timeout=30)
-    return resp.json() if resp.status_code == 200 else None
-
-def get_vm_data_live(vm_name, rg, commands):
-    """Fetch VM data via command proxy batch (live, primary source)."""
-    resp = requests.post(f"{COMMAND_PROXY_URL}/batch",
-        headers={"x-api-key": COMMAND_PROXY_KEY, "Content-Type": "application/json"},
-        json={"vm": vm_name, "rg": rg, "commands": commands}, timeout=180)
-    if resp.status_code == 200:
-        results = {r["id"]: r["output"] for r in resp.json().get("results", [])}
-        return {"source": "live", "data": results, "timestamp": datetime.now(timezone.utc).isoformat()}
-    return None
-
-def get_vm_configs_fallback(sid, hostname):
-    """Fallback: fetch VM config data from blob (stale, 4-6h old)."""
-    resp = requests.get(f"{PROXY_URL}/api/configs/{sid}/{hostname}", headers={"x-api-key": PROXY_KEY}, timeout=60)
-    if resp.status_code == 200:
-        data = resp.json()
-        return {"source": "blob", "data": data.get("files", {}), "timestamp": data.get("last_modified", "unknown")}
-    return {"source": "none", "data": {}, "timestamp": None}
-
-def get_vm_data(vm_name, rg, sid, hostname, commands):
-    """Try live command proxy first, fall back to blob."""
-    live = get_vm_data_live(vm_name, rg, commands)
-    if live:
-        return live
-    return get_vm_configs_fallback(sid, hostname)
+# AMS_WORKSPACE_ID: Use ams_workspace_id from Team Onboarding (only if AMS is listed)
 ```
+
+**Getting VM/HANA data (adaptive — no dead endpoints):**
+- **Stored HANA/OS configs** (`global.ini`, `indexserver.ini`, `sysctl`, stripe/fstab) — read **directly** from the `sap-configs` blob with the agent's own MI: `RunAzCliReadCommands` → `az storage blob download --auth-mode login --account-name <sa> --container-name sap-configs --name <SID>/<host>/latest/...`. Available whenever a **Storage Account** is listed.
+- **Live HANA SQL / OS state** (`M_EXPENSIVE_STATEMENTS`, `M_HEAP_MEMORY`, `lsblk`) — only when the **MCP command proxy** is configured: invoke the **SAP Command Runner** skill (`run_batch`) with the performance commands below. If it is not configured or errors, use the stored blob configs. Never block on it.
+- **Landscape inventory** — read from the agent Knowledge Base or the `sap-configs` blob directly. There is **no** `/api/registry` endpoint.
 
 **Standard commands for performance checks**:
 ```python
@@ -137,10 +111,10 @@ PERF_COMMANDS = [
 | STR-004 | Disk type + size (/hana/data, /hana/log) | ARM API | Premium SSD/Ultra/ANF |
 | STR-005 | Write Accelerator enabled | ARM API (disk caching) | Enabled for /hana/log |
 | STR-006 | HANA IO savepoint duration | `SapHana_IO_Savepoint_CL` | >300s AMBER, >600s RED |
-| STR-007 | Stripe config (lsblk) | **Command proxy batch** (fallback: blob) | /hana/data=256k, /hana/log=64k |
-| STR-008 | fstab mount options | **Command proxy batch** (fallback: blob) | nofail, nobarrier for data |
+| STR-007 | Stripe config (lsblk) | **MCP proxy (run_batch)** (fallback: blob) | /hana/data=256k, /hana/log=64k |
+| STR-008 | fstab mount options | **MCP proxy (run_batch)** (fallback: blob) | nofail, nobarrier for data |
 | STR-009 | ANF volume throughput | Azure Monitor (ANF) | provisioned vs consumed |
-| STR-010 | Data freshness | Command proxy timestamp or blob last-modified | <24h GREEN, >48h RED |
+| STR-010 | Data freshness | MCP proxy timestamp or blob last-modified | <24h GREEN, >48h RED |
 
 ## Query Optimization
 

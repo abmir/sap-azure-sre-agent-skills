@@ -72,13 +72,13 @@ The custom role grants:
 
 | Symptom | Likely Cause | Fix |
 |---------|--------------|-----|
-| `/api/diag` returns 500 on ARM call | Proxy UMI missing RBAC on subscription/SAP RG | Re-run Step 11 |
-| `/api/command` returns "AuthorizationFailed" | Custom role not assigned on the target RG | Step 11 — confirm role assignment on the **VM's** RG |
-| `/api/configs/...` returns empty list | Collector hasn't run yet, or blob firewall blocks SAP subnet | Step 13 + Step 17 (run collector once manually) |
-| `deploy_collector` returns "AADSTS" error | VM missing collector UMI assignment | Step 12 |
-| Collector log shows "AuthorizationPermissionMismatch" | Collector UMI missing Storage Blob Data Contributor | Re-run deploy script (Step 10 grants this automatically) |
-| Skills can't find systems | `sap-landscape-inventory.json` not uploaded to Knowledge Sources | Step 9 |
-| Agent asks for proxy URL repeatedly | Team Onboarding not pasted | Step 15 |
+| `run_command` fails on the ARM call | MCP proxy UMI missing RBAC on the SAP RG | Re-run `deploy-mcp-proxy.ps1` (grants the custom role) |
+| `run_command` returns "AuthorizationFailed" | Custom role not assigned on the target RG | Confirm the `sre-mcp-umi` role assignment on the **VM's** RG |
+| Config skills report "no collected configs" | Collector hasn't run yet, or blob firewall blocks the SAP/agent subnet | Run the collector once manually + allow the subnet on the storage firewall |
+| Collector run fails with "AADSTS" | VM missing the collector UMI assignment | Assign `sre-collector-umi` to the VM (`az vm identity assign`) |
+| Collector log shows "AuthorizationPermissionMismatch" | Collector UMI missing Storage Blob Data Contributor | Re-run `deploy-sre-infra.ps1` (grants this automatically) |
+| Skills can't find systems | `sap-landscape-inventory.json` not in the fork / Knowledge Base | Add it via Code Access or Knowledge Sources |
+| Live commands unavailable | `sap-sre-proxy` MCP connector not configured | Register the connector (setup-detailed Step 11) + paste Team Onboarding |
 | AMS queries return no rows | Wrong column names (`sapsid_s` vs `SID_s`) | See onboarding template "Data Sources" section |
 
 Container App logs:

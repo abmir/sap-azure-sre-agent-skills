@@ -14,7 +14,7 @@
 
 ## Deployed Infrastructure
 
-The agent auto-detects capabilities from this section and adapts skill behavior. **Every capability is independently optional and phased** — list ONLY what you have enabled today; add lines as you complete later phases; remove a line to turn that capability off. The two lines skills key on are **Storage Account** and **MCP Command Proxy** — include them **only when actually deployed** (their mere presence flips the dependent skills on).
+The agent auto-detects capabilities from this section and adapts skill behavior. **Every capability is independently optional and phased** — list ONLY what you have enabled today; add lines as you complete later phases; remove a line to turn that capability off. The lines skills key on are **Storage Account**, **MCP Command Proxy**, **SAP telemetry**, and **Incident platform** — include each **only when actually deployed/available** (its presence flips the dependent skills on; its absence makes them degrade gracefully, never fail).
 
 **Enabled now (edit to match your environment):**
 
@@ -30,10 +30,12 @@ The agent auto-detects capabilities from this section and adapts skill behavior.
 - _Example:_ SAP-app telemetry in **SAP Cloud ALM / Focus Run** — **planned Phase 2** connector; until then, drop the SAP telemetry line and telemetry-dependent skills use Azure platform metrics only.
 - _Example:_ **ServiceNow** incident platform — **tabled**.
 
-**How it works:** each skill checks this section for what it needs:
-- config-validator + enriched RCA / performance / HA / maintenance → look for the **Storage Account** line
-- command-runner + self-healing → look for the **MCP Command Proxy** line (and the `sap-sre-proxy` MCP connector)
-- everything else → Azure APIs + whatever telemetry source is listed (AMS if present, otherwise Azure platform metrics)
+**How it works:** each skill checks this section for what it needs and **adapts automatically — it never hard-fails because a capability is absent**:
+- config-validator + config-enriched RCA / performance / HA / maintenance → look for the **Storage Account** line
+- command-runner + self-healing (live VM actions) → look for the **MCP Command Proxy** line (and the `sap-sre-proxy` MCP connector)
+- health / performance / trend / incident (SAP-app & HANA depth) → look at the **SAP telemetry** line: use **AMS** if listed; else an **SAP APM connector** (SAP Cloud ALM / Focus Run / Dynatrace) if listed; else fall back to **Azure platform metrics only** (VM Insights, Azure Monitor) and disclose the reduced fidelity in the report header
+- incident-analysis + self-healing (incident records) → look at the **Incident platform** line: create/update incidents in **ServiceNow** (or the listed platform) if present; otherwise notify via **Teams/Outlook** only
+- everything else → Azure APIs, always available with the agent's RBAC
 
 **To change phase:** enable the component, then add its line to *Enabled now* (for the proxy, paste the real MCP endpoint URL — that single line turns command-runner & self-healing on). Remove a line to scale a capability back down.
 

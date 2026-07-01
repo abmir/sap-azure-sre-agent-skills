@@ -26,7 +26,7 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 This skill **requires the MCP command proxy** for any remediation action, registered as the **`sap-sre-proxy` MCP connector**. Detection-only behavior works without it, but the skill cannot autonomously fix anything without a live-command path.
 
 - **If the connector is missing** — Respond exactly: "Automated self-healing requires the MCP command proxy. I can DETECT issues from AMS / Activity Log / Azure Monitor but cannot REMEDIATE without it. Deploy it with `infra/deploy-mcp-proxy.ps1` and add the `sap-sre-proxy` MCP connector. Until then, this skill will only alert — not auto-act." Then stop.
-- **If the connector is present** — Run the full flow below. T4 guardrails apply (allowlist, rate limit, kill switch). Use the MCP tools (`run_command`) via the SAP Command Executor skill.
+- **If the connector is present** — Run the full flow below. T4 guardrails apply (allowlist, rate limit, kill switch). Use the MCP tools (`run_command`) via the SAP Command Runner skill.
 
 ## Tier: T4 — Autonomous Remediation
 
@@ -41,6 +41,7 @@ This skill **requires the MCP command proxy** for any remediation action, regist
 - **Kill switch**: disable via Application Settings `T4_ENABLED=false`
 - **Every action logged** to Application Insights with before/after state
 - **Teams notification** within 60 seconds of every action
+- **Incident record (adaptive)**: if an incident platform (e.g. ServiceNow) is listed in Deployed Infrastructure, also create/update an incident for each action; otherwise the Teams/Outlook notification is the record. Never block the action because no incident platform is configured.
 - **Severity escalation**: if 3+ actions on same system within 1 hour → escalate to human
 
 ## When to Use (Auto-Triggered)
@@ -57,36 +58,36 @@ This skill **requires the MCP command proxy** for any remediation action, regist
 - For Azure Resource Manager queries: Use the built-in `GetArmResourceAsJson` or `RunAzCliReadCommands` tools
 - For Log Analytics queries: Use the built-in `QueryLogAnalyticsByWorkspaceId` tool  
 - For metrics: Use the built-in `GetMetricTimeSeriesElementsForAzureResource` tool
-- For live VM commands: invoke the **SAP Command Executor** skill, which calls the `sap-sre-proxy` MCP connector — do NOT make direct HTTP calls
+- For live VM commands: invoke the **SAP Command Runner** skill, which calls the `sap-sre-proxy` MCP connector — do NOT make direct HTTP calls
 
 ```python
-# Use built-in tools for Azure API access; use the SAP Command Executor skill for VM commands.
+# Use built-in tools for Azure API access; use the SAP Command Runner skill for VM commands.
 import json
 from datetime import datetime, timedelta, timezone
 
 # SUB_ID: Use subscription_id from Team Onboarding
 # AMS_WORKSPACE_ID: Use ams_workspace_id from Team Onboarding
 
-# Live remediation commands run via the SAP Command Executor skill (the `sap-sre-proxy` MCP
+# Live remediation commands run via the SAP Command Runner skill (the `sap-sre-proxy` MCP
 #   connector). Stored configs are read directly from the sap-configs blob
 #   (`az storage blob ... --auth-mode login`), not through the proxy.
 
-# All VM commands are executed via the SAP Command Executor skill
-# This skill determines WHAT to do, Command Executor does HOW
+# All VM commands are executed via the SAP Command Runner skill
+# This skill determines WHAT to do, Command Runner does HOW
 ```
 
 ## Scenario 1: Log Volume Full
 
 **Trigger**: /hana/log utilization >90% (from Azure Monitor or Anomaly Forecaster)
 
-**To execute VM commands**: Invoke the **SAP Command Executor** skill. Do NOT call the command proxy directly.
+**To execute VM commands**: Invoke the **SAP Command Runner** skill. Do NOT call the command proxy directly.
 
 ```python
 def handle_log_volume_full(vm_name, rg, sidadm):
-    """Emergency log volume management — invokes Command Executor skill."""
-    # Step 1: Invoke Command Executor with command_id=hana_log_backup
-    # Step 2: Invoke Command Executor with command_id=hana_log_cleanup
-    # Step 3: Invoke Command Executor with command_id=df_hana to verify
+    """Emergency log volume management — invokes Command Runner skill."""
+    # Step 1: Invoke Command Runner with command_id=hana_log_backup
+    # Step 2: Invoke Command Runner with command_id=hana_log_cleanup
+    # Step 3: Invoke Command Runner with command_id=df_hana to verify
     pass
 
     # Step 4: Notify
@@ -116,8 +117,8 @@ def check_backup_freshness(sid):
     return query_log_analytics(query, timespan_hours=72)
 
 def handle_stale_backup(vm_name, rg, sidadm):
-    """Trigger on-demand backup when backup is stale — invokes Command Executor skill."""
-    # Invoke SAP Command Executor with command_id=hana_log_backup, sidadm=sidadm
+    """Trigger on-demand backup when backup is stale — invokes Command Runner skill."""
+    # Invoke SAP Command Runner with command_id=hana_log_backup, sidadm=sidadm
     return {"action": "on_demand_backup", "status": "triggered"}
 ```
 
@@ -127,8 +128,8 @@ def handle_stale_backup(vm_name, rg, sidadm):
 
 ```python
 def handle_sysctl_drift(vm_name, rg):
-    """Auto-apply sysctl.d configs after drift detected — invokes Command Executor skill."""
-    # Step 1: Invoke SAP Command Executor with command_id=sysctl_apply
+    """Auto-apply sysctl.d configs after drift detected — invokes Command Runner skill."""
+    # Step 1: Invoke SAP Command Runner with command_id=sysctl_apply
     # Step 2: Re-validate via Config Guardian T1 mode
     pass
 
