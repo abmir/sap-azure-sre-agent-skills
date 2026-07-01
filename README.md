@@ -84,7 +84,7 @@ Each phase is independent — stop after any phase. Deeper detail lives in [docs
    - **AMS Log Analytics workspace** *(recommended)* — persistent awareness of your AMS workspace for the HANA / OS / cluster health layers. Not strictly required: with **Log Analytics Reader** (step 2) + the workspace ID in onboarding the agent can already query it via built-in tools; the connector adds ambient context and richer diagnostics.
    - **Application Insights** *(optional)* — only if your app tier emits to it; **additive** to AMS/ARM, not a replacement.
    - **Notifications — Teams and/or Outlook** *(optional, recommended)* — lets the agent send investigation **summaries** (root cause, impact, recommended actions) to a channel or inbox. Each uses an **OAuth sign-in** (the agent sends *as* that account) plus a **user-assigned managed identity** — create one and reuse it across connectors. The incident-analysis and self-healing skills post here when configured; otherwise they report in chat.
-   - **Docs / knowledge** *(optional)* — e.g. an **MCP** connector to Microsoft Learn docs (or GitHub / Azure DevOps) to ground answers. Not required by the SAP skills.
+   - **Docs / knowledge** *(optional)* — e.g. an **MCP** connector to Microsoft Learn docs (or GitHub / Azure DevOps) to ground answers.
 4. **Connect the repo.** Builder → **Code Access** → connect your fork (skills' source + knowledge base).
 5. **Install skills.** Builder → **Plugins** → install **`sap-sre-core`**.
 6. **Onboard.** Settings → **Team Onboarding** → paste your filled [onboarding template](onboarding/team-onboarding.template.md) (systems, subscription, AMS workspace).
