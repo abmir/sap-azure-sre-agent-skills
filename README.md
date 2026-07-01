@@ -59,8 +59,6 @@ Each phase is independent — stop after any phase. Deeper detail lives in [docs
    - **A. Subscription (simplest):** grant the roles once at the **subscription**. The assignment **inherits to every resource — the subscription itself and all of its resource groups** — so you never enumerate RGs, and it also reaches the sources that exist only at subscription level (Service Health, cross-RG cost / RI, Defender).
    - **B. Resource-group only (least privilege):** if the customer won't grant at subscription scope, grant the roles on **every relevant RG** — SAP app RGs (`RG_SAP_*`), each ACSS/managed RG (`mrg-*`), and the AMS workspace RG (`mrg-sapmon-*`). Per-system skills work fully; you lose only the **subscription-only** sources above (the skills say so when asked). See [RBAC scoping](docs/reference.md#rbac-scoping--rg-only-vs-subscription) · [SRE Agent permissions](https://learn.microsoft.com/azure/sre-agent/permissions).
 
-   > **Auto-discovery is tag-dependent, not just scope-dependent.** "Find all SAP systems" uses Azure Resource Graph, which returns only resources the identity can read **and** recognizes SAP systems by their **tags, ACSS (VIS) registration, or naming**. Subscription scope lets it scan the whole subscription, but untagged / unregistered VMs may still not be auto-found — list those in the onboarding inventory instead.
-
    ```bash
    AGENT=<agent-mi-object-id>; SUB=<sub-id>
 
