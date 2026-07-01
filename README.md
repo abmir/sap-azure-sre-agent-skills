@@ -45,25 +45,36 @@ Each phase is independent — stop after any phase. Deeper detail lives in [docs
 
 1. **Create the agent & enable capabilities.** At [sre.azure.com](https://sre.azure.com) create an SRE Agent and note its **Managed Identity** object ID (Identity blade).
    - **Tools & Skills:** In **Capabilities → Tools** and **Capabilities → Skills**, leave everything at the **defaults** — no changes needed. Access is enforced by the agent's **Managed Identity + read-only RBAC** (step 2), so the built-in tool toggles aren't the guardrail. Further reading: [Manage global tools](https://learn.microsoft.com/azure/sre-agent/manage-global-tools) · [Tools & skills page](https://learn.microsoft.com/azure/sre-agent/global-tools-page) · [Tools overview](https://learn.microsoft.com/azure/sre-agent/tools).
-2. **Grant read access (RBAC).** The agent reads all Azure platform data — resource state, metrics, health, activity log, advisor, cost, resource graph — through its **Managed Identity**, so it only needs **read** roles. Pick one model:
+2. **Grant read access (RBAC).** The agent reads all Azure platform data through its **Managed Identity** — it only needs **read** roles. **Reader** is the umbrella (`*/read` across services); a few data planes need their own read role on top:
 
-   | Scope | RBAC roles | Justification |
-   |-------|-----------|---------------|
-   | **A. Subscription** *(recommended, simplest)* | **Reader** + **Monitoring Reader** + **Cost Management Reader** | One grant inherits to every RG **and** covers the subscription-only sources: Service Health, cross-RG cost + RI coverage, Defender secure score, and auto-discovery of all SAP systems. |
-   | **B. SAP system RGs** (`RG_SAP_*`) | **Reader** + **Monitoring Reader** | Per-system data: VM / disk / NIC state, platform metrics, Resource Health, Activity Log, Advisor. |
-   | **B. Other RGs** — ACSS/managed (`mrg-*`) **and** AMS workspace (`mrg-sapmon-*`) | **Reader** + **Monitoring Reader** *(+ Cost Management Reader where you want cost)* | The VIS, disks, and Key Vault (ACSS) and the **Log Analytics workspace** (AMS) live in *separate* RGs — the SAP-app RG grant doesn't reach them. |
+   | Role | What it unlocks | Grant at |
+   |------|-----------------|----------|
+   | **Reader** | Control-plane read for (almost) everything — VM / disk / NIC / LB / PPG state, ACSS (VIS), Resource Graph, Activity Log, Resource Health, Advisor, Azure Policy, Backup / ASR status | Subscription **or** every relevant RG |
+   | **Monitoring Reader** | Azure Monitor **metrics**, alerts, and diagnostic settings | Same scope as Reader |
+   | **Log Analytics Reader** | **Query** the AMS Log Analytics workspace (KQL over HANA / OS / cluster tables) — this data-plane query isn't granted by Reader | The **AMS workspace** / its RG (`mrg-sapmon-*`) |
+   | **Cost Management Reader** *(for cost skills)* | Cost, budgets, RI coverage | Subscription (rollups) or per-RG |
+   | **Security Reader** *(optional)* | Defender for Cloud secure score / recommendations | Subscription |
 
-   > **Grant A _or_ both B rows — not both.** Subscription scope (A) inherits to every RG, so it's the one-step path. If the customer **won't** grant at subscription scope, do the **B rows on every relevant RG** instead (SAP app RGs + each `mrg-*` + each `mrg-sapmon-*`). Per-system skills then work fully; you only lose the **subscription-only** sources (Service Health, sub-wide cost/RI, Defender score, full auto-discovery), and the skills disclose that when asked. Details: [RBAC scoping](docs/reference.md#rbac-scoping--rg-only-vs-subscription) · official [SRE Agent permissions](https://learn.microsoft.com/azure/sre-agent/permissions).
+   **Scope — pick one:**
+   - **A. Subscription (simplest):** grant the roles once at the **subscription**. The assignment **inherits to every resource — the subscription itself and all of its resource groups** — so you never enumerate RGs, and it also reaches the sources that exist only at subscription level (Service Health, cross-RG cost / RI, Defender).
+   - **B. Resource-group only (least privilege):** if the customer won't grant at subscription scope, grant the roles on **every relevant RG** — SAP app RGs (`RG_SAP_*`), each ACSS/managed RG (`mrg-*`), and the AMS workspace RG (`mrg-sapmon-*`). Per-system skills work fully; you lose only the **subscription-only** sources above (the skills say so when asked). See [RBAC scoping](docs/reference.md#rbac-scoping--rg-only-vs-subscription) · [SRE Agent permissions](https://learn.microsoft.com/azure/sre-agent/permissions).
+
+   > **Auto-discovery is tag-dependent, not just scope-dependent.** "Find all SAP systems" uses Azure Resource Graph, which returns only resources the identity can read **and** recognizes SAP systems by their **tags, ACSS (VIS) registration, or naming**. Subscription scope lets it scan the whole subscription, but untagged / unregistered VMs may still not be auto-found — list those in the onboarding inventory instead.
 
    ```bash
-   # Model A — subscription scope (one-time; simplest):
-   az role assignment create --assignee-object-id <agent-mi> --assignee-principal-type ServicePrincipal --role Reader                  --scope /subscriptions/<sub>
-   az role assignment create --assignee-object-id <agent-mi> --assignee-principal-type ServicePrincipal --role "Monitoring Reader"     --scope /subscriptions/<sub>
-   az role assignment create --assignee-object-id <agent-mi> --assignee-principal-type ServicePrincipal --role "Cost Management Reader" --scope /subscriptions/<sub>
+   AGENT=<agent-mi-object-id>; SUB=<sub-id>
 
-   # Model B — resource-group scope: repeat BOTH for EACH SAP RG, each mrg-* (ACSS), and each mrg-sapmon-* (AMS) RG:
-   az role assignment create --assignee-object-id <agent-mi> --assignee-principal-type ServicePrincipal --role Reader             --scope /subscriptions/<sub>/resourceGroups/<RG>
-   az role assignment create --assignee-object-id <agent-mi> --assignee-principal-type ServicePrincipal --role "Monitoring Reader" --scope /subscriptions/<sub>/resourceGroups/<RG>
+   # (both models) Log Analytics query on the AMS workspace — scope to the AMS RG:
+   az role assignment create --assignee-object-id $AGENT --assignee-principal-type ServicePrincipal --role "Log Analytics Reader" --scope /subscriptions/$SUB/resourceGroups/<mrg-sapmon-RG>
+
+   # Model A — subscription scope (simplest): resource state + metrics + cost across everything
+   for R in "Reader" "Monitoring Reader" "Cost Management Reader"; do
+     az role assignment create --assignee-object-id $AGENT --assignee-principal-type ServicePrincipal --role "$R" --scope /subscriptions/$SUB
+   done
+
+   # Model B — per RG (instead of Model A): repeat for EACH SAP RG + each mrg-* (ACSS) + the mrg-sapmon-* (AMS) RG
+   az role assignment create --assignee-object-id $AGENT --assignee-principal-type ServicePrincipal --role "Reader"           --scope /subscriptions/$SUB/resourceGroups/<RG>
+   az role assignment create --assignee-object-id $AGENT --assignee-principal-type ServicePrincipal --role "Monitoring Reader" --scope /subscriptions/$SUB/resourceGroups/<RG>
    ```
 
 3. **Add telemetry connectors.** Builder → **Connectors**:
