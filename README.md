@@ -32,6 +32,29 @@ The agent consumes this repo through two GitHub connections (plus one manual pas
 
 Install only the plugins your tier supports. A security-strict customer installs just `sap-sre-core` and never sees the proxy skills.
 
+## Quick start — implement in 3 phases
+
+Pick your components with the [Adoption planner](#adoption-planner--mix--match-by-phase); this is the simplest happy path. Each phase is independent — stop after any phase.
+
+**Phase 0 — Azure-native (≈30 min, no infrastructure)**
+1. Create an agent at [sre.azure.com](https://sre.azure.com); note its Managed Identity.
+2. Grant that identity **Reader** + **Monitoring Reader** on your SAP resource groups (and **Cost Management Reader** at subscription scope).
+3. **Builder → Code Access** → connect your fork of this repo (skills' source + knowledge).
+4. **Builder → Plugins** → install **`sap-sre-core`** (10 skills).
+5. Ask: *"What SAP systems do I have?"*, *"Is AB1 healthy?"*, *"How much does AB1 cost?"*
+
+**Phase 1 — Config store (≈1 hr) — adds STAF validation + config-enriched RCA/perf/HA**
+6. Deploy storage + collector: `infra/deploy-sre-infra.ps1 -Mode ConfigStore -SubscriptionId <sub> -StorageAccountName <name> -SreAgentUmiPrincipalId <agent-mi-object-id>`. This creates the `sap-configs` storage and grants the **agent MI Storage Blob Data Reader** (the agent reads configs **directly** — no proxy).
+7. VNet-integrate the agent and allow its subnet on the storage firewall (so the private storage is reachable).
+8. Assign the **collector UMI** to your SAP VMs and run the collector (via `az vm run-command`).
+9. **Builder → Plugins** → install **`sap-sre-config`**. Ask: *"Run config checks for AB1."*
+
+**Phase 2 — Live commands (optional, ≈1 hr) — adds command-runner + self-healing**
+10. Deploy the optional proxy: `infra/deploy-sre-infra.ps1 -Mode Full ...` (its own resource group; commands only, no storage role).
+11. Add the proxy URL + key to **Team Onboarding**, then **Builder → Plugins** → install **`sap-sre-proxy-ops`**. Ask: *"Run uptime on AB1vm."*
+
+> Full detail for each step is in the [Setup Guide](#setup-guide) below. Deferring a piece (e.g. ServiceNow, SAP Cloud ALM / Focus Run telemetry) is expected — see the [Adoption planner](#adoption-planner--mix--match-by-phase).
+
 ## Architecture
 
 ![Azure SRE Agent for SAP Workloads — architecture](docs/sap-on-azure-sre-agent.png)
@@ -212,7 +235,7 @@ sap-azure-sre-agent/
 ├── infra/                       # Operator deploy automation (NOT installed by the agent)
 │   ├── deploy-sre-infra.ps1     # One-shot infra deploy (VNet, ACR, Storage, UMI, Container App)
 │   └── sap-sre-agent-role.json  # Custom RBAC role (read + runCommand only)
-├── proxy/                       # FastAPI proxy (Container App)
+├── proxy/                       # OPTIONAL SRE Proxy (Container App) — live commands only; → future MCP server
 │   ├── app.py                   # All API routes
 │   ├── Dockerfile               # Build context for ACR
 │   └── requirements.txt
@@ -554,11 +577,15 @@ This keeps the proxy focused on its one job — brokered VM command execution �
 
 ## Identities & RBAC
 
+Config reads are **decoupled from the proxy**: the SRE Agent reads configs from storage with its **own** identity; the proxy (optional) only runs live VM commands and has **no storage role**.
+
 | Identity | Assigned to | Purpose | RBAC |
 |----------|------------|---------|------|
-| SRE Agent MI | SRE Agent platform | Azure API queries + direct blob reads (when Storage Account deployed) | Reader on SAP RGs, Log Analytics Reader on AMS LAW, **Storage Blob Data Reader on the `sap-configs` storage account** (only when Storage Account is deployed — required by `sap-config-validator` skill) |
-| sre-proxy-umi | Container App | VM commands + blob + ARM queries | Custom - SAP SRE Agent Operator on SAP RGs; Storage Blob Data Contributor on storage; AcrPull on ACR |
-| sre-collector-umi | SAP VMs | Config upload to blob | Storage Blob Data Contributor on storage |
+| **SRE Agent MI** | SRE Agent platform | Azure API queries + **direct** config blob reads | Reader on SAP RGs, Log Analytics Reader on AMS LAW, **Storage Blob Data Reader on the `sap-configs` storage account** (whenever a config store is deployed — used by *all* config-consuming skills, not just config-validator) |
+| **sre-collector-umi** | SAP VMs | Config upload to blob (write) | Storage Blob Data Contributor on the `sap-configs` storage account |
+| **sre-proxy-umi** *(optional)* | SRE Proxy Container App | **Live VM commands only** | Custom - SAP SRE Agent Operator on SAP RGs; AcrPull on ACR. **No storage role** — the proxy is never in the config path. |
+
+> **Network path for direct reads:** because the storage account is private (no shared keys), the SRE Agent must be able to reach it. VNet-integrate the agent (delegated subnet) and allow that subnet on the storage firewall, so the agent MI reads configs privately and Entra-only. The proxy is no longer needed to bridge the network.
 
 The custom role grants:
 - `Microsoft.Compute/virtualMachines/read`, `/runCommand/action`
