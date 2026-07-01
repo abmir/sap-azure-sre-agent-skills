@@ -47,21 +47,14 @@ Each phase is independent — stop after any phase. Deeper detail lives in [docs
    - **Built-in Tools** (Capabilities → Tools): leave at the **defaults**. The SAP skills rely on these tools, and access is enforced by the agent's **Managed Identity + read-only RBAC** (step 2), not the toggles.
    - **Built-in Skills** (Capabilities → Skills): keep the defaults, and enable these four — **`log_analytics_query`**, **`app_insights_query`**, **`azure_alerting_incident_handler`**, **`azure_alerting_scheduled_task`**.
    - Further reading: [Manage global tools](https://learn.microsoft.com/azure/sre-agent/manage-global-tools) · [Tools & skills page](https://learn.microsoft.com/azure/sre-agent/global-tools-page) · [Tools overview](https://learn.microsoft.com/azure/sre-agent/tools).
-2. **Grant read access (RBAC).** The agent reads all Azure platform data through its **Managed Identity** — it only needs **read** roles. **Reader** is the umbrella (`*/read` across services); a few data planes need their own read role on top:
+2. **Grant read access (RBAC).** Settings → **Managed Resources** → **Add**, permission level **Reader** (read-only). The portal creates the role assignments for you:
 
-   | Role | What it unlocks | Grant at |
-   |------|-----------------|----------|
-   | **Reader** | Control-plane read for (almost) everything — VM / disk / NIC / LB / PPG state, ACSS (VIS), Resource Graph, Activity Log, Resource Health, Advisor, Azure Policy, Backup / ASR status | Subscription **or** every relevant RG |
-   | **Monitoring Reader** | Azure Monitor **metrics**, alerts, and diagnostic settings | Same scope as Reader |
-   | **Log Analytics Reader** | **Query** the AMS Log Analytics workspace (KQL over HANA / OS / cluster tables) — this data-plane query isn't granted by Reader | The **AMS workspace** / its RG (`mrg-sapmon-*`) |
-   | **Cost Management Reader** *(for cost skills)* | Cost, budgets, RI coverage | Subscription (rollups) or per-RG |
-   | **Security Reader** *(optional)* | Defender for Cloud secure score / recommendations | Subscription |
+   | What you add | Roles the agent receives | Unlocks |
+   |---|---|---|
+   | **Subscription** | **Reader** (+ Monitoring Reader) | Read across the whole subscription — resource state, metrics, health, Activity Log, Advisor, Resource Graph |
+   | **Each resource group** — SAP system RGs · AMS RGs (your `RG_AMS` + managed `mrg-sapmon-*`) · ACSS RGs (your `RG_SAP_*` + managed `mrg-*`) · shared-services RG | **Monitoring Reader · Log Analytics Reader · Storage Blob Data Reader · Azure Center for SAP solutions** | AMS KQL (HANA/OS/cluster), SAP VIS (ACSS), and blob read (a head start on the Phase 1 config store) |
 
-   **Easiest — let the portal grant it (recommended):** Settings → **Managed Resources** → **Add** your **subscription** (grants **Reader** sub-wide) and the specific **resource groups** — SAP app RGs, ACSS (`mrg-*`), and the AMS (`mrg-sapmon-*`) RG — at permission level **Reader**. Adding a resource group grants **Reader + Monitoring Reader + Log Analytics Reader + Storage Blob Data Reader + an Azure Center for SAP solutions role** for you (keep **Reader**, *not* Privileged), and registers those resources with the agent. The Storage Blob Data Reader it adds is a head start on the Phase 1 config store. **Not included:** **Cost Management Reader** — add it at subscription scope if you want the cost skill. Use the `az` commands below only for scripting / at scale.
-
-   **Scope — pick one:**
-   - **A. Subscription (simplest):** grant the roles once at the **subscription**. The assignment **inherits to every resource — the subscription itself and all of its resource groups** — so you never enumerate RGs, and it also reaches the sources that exist only at subscription level (Service Health, cross-RG cost / RI, Defender).
-   - **B. Resource-group only (least privilege):** if the customer won't grant at subscription scope, grant the roles on **every relevant RG** — SAP app RGs (`RG_SAP_*`), each ACSS/managed RG (`mrg-*`), and the AMS workspace RG (`mrg-sapmon-*`). Per-system skills work fully; you lose only the **subscription-only** sources above (the skills say so when asked). See [RBAC scoping](docs/reference.md#rbac-scoping--rg-only-vs-subscription) · [SRE Agent permissions](https://learn.microsoft.com/azure/sre-agent/permissions).
+   Keep **Reader**, *not* Privileged. **Cost Management Reader** isn't in the bundle — add it at subscription scope if you want the cost skill. Adding at **subscription** scope inherits to every RG; the RG-only path works too but loses subscription-only sources (Service Health, sub-wide cost/RI, Defender). Details: [RBAC scoping](docs/reference.md#rbac-scoping--rg-only-vs-subscription) · [SRE Agent permissions](https://learn.microsoft.com/azure/sre-agent/permissions).
 
    <details>
    <summary>Prefer scripting? Show the <code>az role assignment</code> commands</summary>
