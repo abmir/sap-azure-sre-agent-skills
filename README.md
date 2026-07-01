@@ -80,11 +80,15 @@ Each phase is independent — stop after any phase. Deeper detail lives in [docs
 
    </details>
 
-3. **Add telemetry connectors.** Builder → **Connectors**:
-   - **AMS Log Analytics workspace** — required for the HANA / OS / cluster health layers (the agent queries it by workspace ID).
-   - **Application Insights** *(optional)* — only if your app tier emits to it; it's **additive** to AMS/ARM, not a replacement.
+3. **Add connectors** (Builder → **Connectors**). Connectors give the agent persistent context and extra channels; adding one needs **Contributor** on the *agent's* resource group.
+   - **AMS Log Analytics workspace** *(recommended)* — persistent awareness of your AMS workspace for the HANA / OS / cluster health layers. Not strictly required: with **Log Analytics Reader** (step 2) + the workspace ID in onboarding the agent can already query it via built-in tools; the connector adds ambient context and richer diagnostics.
+   - **Application Insights** *(optional)* — only if your app tier emits to it; **additive** to AMS/ARM, not a replacement.
+   - **Notifications — Teams and/or Outlook** *(optional, recommended)* — lets the agent send investigation **summaries** (root cause, impact, recommended actions) to a channel or inbox. Each uses an **OAuth sign-in** (the agent sends *as* that account) **plus a managed identity**. The incident-analysis and self-healing skills post here when configured; otherwise they report in chat.
+   - **Docs / knowledge** *(optional)* — e.g. an **MCP** connector to Microsoft Learn docs (or GitHub / Azure DevOps) to ground answers. Not required by the SAP skills.
 
-   > Connectors let the agent *query telemetry stores*; **RBAC (step 2) is what unlocks the rest** — health, cost, advisor, resource state, and platform metrics.
+   > **System- vs user-assigned identity:** **System-assigned** is simplest for a single agent (created with it, tied to its lifecycle) — fine for this test. Prefer a **user-assigned** managed identity for production/fleet: one identity reused across connectors and agents, permissions granted once, that survives agent recreation. MCP connectors (e.g. Microsoft Learn) are endpoint-authenticated — a managed identity is optional there.
+
+   > Connectors let the agent *query telemetry stores* and *send notifications*; **RBAC (step 2) is what unlocks the rest** — health, cost, advisor, resource state, and platform metrics.
 4. **Connect the repo.** Builder → **Code Access** → connect your fork (skills' source + knowledge base).
 5. **Install skills.** Builder → **Plugins** → install **`sap-sre-core`**.
 6. **Onboard.** Settings → **Team Onboarding** → paste your filled [onboarding template](onboarding/team-onboarding.template.md) (systems, subscription, AMS workspace).
