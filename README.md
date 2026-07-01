@@ -2,7 +2,7 @@
 
 AI-powered SRE agent for SAP HANA and NetWeaver on Azure. Automates health monitoring, STAF configuration validation, incident analysis, and cost optimization — all through natural language at [sre.azure.com](https://sre.azure.com).
 
-**Three adoption tiers** — pick what fits your security posture. Start with Azure-native telemetry using your existing Azure signals, add a customer-controlled config store for STAF compliance that unlocks the config validator and enriches 4 more skills (incident RCA, performance diagnostics, HA cluster health, maintenance) — 5 skills in all, then add a brokered command proxy to run an approved set of read-only commands on your SAP VMs. See [Tiered plugins](#tiered-plugins) below, or the full [Adoption planner](docs/adoption-planner.md).
+**Three adoption tiers** — pick what fits your security posture. Start with Azure-native telemetry using your existing Azure signals, add a customer-controlled config store for STAF compliance that unlocks the config validator and enriches 4 more skills (incident RCA, performance diagnostics, HA cluster health, maintenance) — 5 skills in all, then add an MCP command proxy (registered as a connector) to run an approved set of read-only commands on your SAP VMs. See [Tiered plugins](#tiered-plugins) below, or the full [Adoption planner](docs/adoption-planner.md).
 
 ## This repo is the single source of truth
 
@@ -13,8 +13,8 @@ The agent consumes this repo through two GitHub connections (plus one manual pas
 | Path | Portal location | What it pulls from this repo |
 |------|-----------------|------------------------------|
 | **Plugin Marketplace** | Builder → Plugins | **Skills** (and any MCP server configs) — the tiered plugins in [`plugins/`](plugins/) via [`.github/plugin/marketplace.json`](.github/plugin/marketplace.json). Installed as a version-pinned copy. |
-| **Code Access** | Builder → Code Access | **Everything else in the repo** — `knowledge/` (incl. the SAP/HANA cert reference), `config/`, `docs/`, and the proxy/IaC code. One connection covers it all. |
-| **Team Onboarding** (manual) | Settings → Team Onboarding | The filled onboarding text. **Pasted by hand** — it carries secrets (proxy URL, API key) so it is *not* read from the repo. |
+| **Code Access** | Builder → Code Access | **Everything else in the repo** — `knowledge/` (incl. the SAP/HANA cert reference), `config/`, `docs/`, and the IaC + MCP proxy code. One connection covers it all. |
+| **Team Onboarding** (manual) | Settings → Team Onboarding | The filled onboarding text. **Pasted by hand** — it carries secrets (MCP endpoint URL, API key) so it is *not* read from the repo. |
 
 > **Note:** plugin installs are **commit-pinned** — merges reach an agent only when someone clicks **Update** on the plugin (it's not a live feed). See [Updates & version pinning](docs/reference.md#updates--version-pinning).
 
@@ -24,41 +24,51 @@ The agent consumes this repo through two GitHub connections (plus one manual pas
 |--------|------|:------:|----------|
 | [`sap-sre-core`](plugins/sap-sre-core) | Azure-Native | 10 | Nothing (Azure APIs + AMS) |
 | [`sap-sre-config`](plugins/sap-sre-config) | + Config Store | 1 | Storage Account |
-| [`sap-sre-proxy-ops`](plugins/sap-sre-proxy-ops) | + Live Proxy | 2 | SRE Proxy + custom RBAC |
+| [`sap-sre-proxy-ops`](plugins/sap-sre-proxy-ops) | + Live Commands | 2 | MCP command proxy + custom RBAC |
 
 Install only the plugins your tier supports. A security-strict customer installs just `sap-sre-core` and never sees the proxy skills.
 
-## Quick start — implement in 3 phases
+## Setup — 3 phases
 
-Pick your components with the [Adoption planner](docs/adoption-planner.md); this is the simplest happy path. Each phase is independent — stop after any phase.
+Each phase is independent — stop after any phase. Deeper detail lives in [docs/setup-detailed.md](docs/setup-detailed.md); pick components with the [Adoption planner](docs/adoption-planner.md).
 
-**Phase 0 — Azure-native (≈30 min, no infrastructure)**
+### Phase 0 — Azure-native · ~30 min · no infrastructure · 10 skills
 
-1. Create an agent at [sre.azure.com](https://sre.azure.com); note its Managed Identity.
-2. Grant that identity **Reader** + **Monitoring Reader** on your SAP resource groups (and **Cost Management Reader** at subscription scope).
-3. **Builder → Code Access** → connect your fork of this repo (skills' source + knowledge).
-4. **Builder → Plugins** → install **`sap-sre-core`** (10 skills).
-5. Ask: *"What SAP systems do I have?"*, *"Is AB1 healthy?"*, *"How much does AB1 cost?"*
+1. **Create the agent.** At [sre.azure.com](https://sre.azure.com) create an SRE Agent and note its **Managed Identity** object ID (Identity blade).
+2. **Grant read access** on each SAP resource group (add **Cost Management Reader** at subscription scope for cost skills):
+   ```bash
+   az role assignment create --assignee-object-id <agent-mi> --assignee-principal-type ServicePrincipal --role Reader             --scope /subscriptions/<sub>/resourceGroups/<SAP-RG>
+   az role assignment create --assignee-object-id <agent-mi> --assignee-principal-type ServicePrincipal --role "Monitoring Reader" --scope /subscriptions/<sub>/resourceGroups/<SAP-RG>
+   ```
+3. **Connect the repo.** Builder → **Code Access** → connect your fork (skills' source + knowledge base).
+4. **Install skills.** Builder → **Plugins** → install **`sap-sre-core`**.
+5. **Onboard.** Settings → **Team Onboarding** → paste your filled [onboarding template](onboarding/team-onboarding.template.md) (systems, subscription, AMS workspace).
+6. **Try it:** *"What SAP systems do I have?"* · *"Is AB1 healthy?"* · *"How much does AB1 cost?"*
 
-**Phase 1 — Config store (≈1 hr) — adds STAF validation + config-enriched RCA/perf/HA**
+### Phase 1 — Config store · ~1 hr · adds STAF validation + config-enriched RCA/perf/HA · +1 skill
 
-6. Deploy storage + collector: `infra/deploy-sre-infra.ps1 -Mode ConfigStore -SubscriptionId <sub> -StorageAccountName <name> -SreAgentUmiPrincipalId <agent-mi-object-id>`. This creates the `sap-configs` storage and grants the **agent MI Storage Blob Data Reader** (the agent reads configs **directly** — no proxy).
-7. VNet-integrate the agent and allow its subnet on the storage firewall (so the private storage is reachable).
-8. Assign the **collector UMI** to your SAP VMs and run the collector (via `az vm run-command`).
-9. **Builder → Plugins** → install **`sap-sre-config`**. Ask: *"Run config checks for AB1."*
+1. **Deploy the store.** Creates a private storage account, the `sap-configs` container, a collector identity, and grants the **agent MI Storage Blob Data Reader** so it reads configs **directly — no proxy**:
+   ```powershell
+   ./infra/deploy-sre-infra.ps1 -SubscriptionId <sub> -StorageAccountName <name> -SreAgentUmiPrincipalId <agent-mi>
+   ```
+2. **Reach private storage.** VNet-integrate the agent and allow its subnet on the storage firewall (pass your SAP subnets via `-SapSubnetIds`).
+3. **Collect configs.** Assign the collector UMI to each SAP VM, then run the collector:
+   ```bash
+   az vm identity assign -g <SAP-RG> -n <VM> --identities <collector-umi-resource-id>
+   az vm run-command invoke -g <SAP-RG> -n <VM> --command-id RunShellScript --scripts @collector/collect-sap-configs.sh
+   ```
+4. **Install skills.** Builder → **Plugins** → install **`sap-sre-config`**.
+5. **Try it:** *"Run config checks for AB1."*
 
-**Phase 2 — Live commands (optional, ≈1 hr) — adds command-runner + self-healing**
+### Phase 2 — Live commands · optional · ~1 hr · adds command-runner + self-healing · +2 skills
 
-10. Deploy the optional proxy: `infra/deploy-sre-infra.ps1 -Mode Full ...` (its own resource group; commands only, no storage role).
-11. Add the proxy URL + key to **Team Onboarding**, then **Builder → Plugins** → install **`sap-sre-proxy-ops`**. Ask: *"Run uptime on AB1vm."*
-
-## Verify it works
-
-Open your agent at [sre.azure.com](https://sre.azure.com) and ask:
-
-- **After Phase 0:** "What SAP systems do I have?" - "Is AB1 healthy?" - "How much does AB1 cost?"
-- **After Phase 1:** "Run config checks for AB1."
-- **After Phase 2:** "Run uptime on AB1vm."
+1. **Deploy the MCP proxy.** A VNet-integrated Container App that exposes an approved set of **read-only** commands over MCP (its own resource group + a custom RBAC role scoped to your SAP RGs — no storage role). It prints the **MCP endpoint URL** and **API key**:
+   ```powershell
+   ./infra/deploy-mcp-proxy.ps1 -SubscriptionId <sub> -SapResourceGroups <RG1>,<RG2> -McpApiKey <key>
+   ```
+2. **Register the connector.** Builder → **MCP / Connectors** → add the MCP server URL with header `x-api-key: <key>`, and add the URL + key to **Team Onboarding**.
+3. **Install skills.** Builder → **Plugins** → install **`sap-sre-proxy-ops`**.
+4. **Try it:** *"Run uptime on AB1vm."*
 
 ## Not sure what to deploy?
 
@@ -75,7 +85,7 @@ Short, task-focused docs for the details:
 | Full setup detail (Steps 1-17) | [docs/setup-detailed.md](docs/setup-detailed.md) |
 | Repository layout (folder guide) | [docs/repo-layout.md](docs/repo-layout.md) |
 | Operations (update skills, add systems) | [docs/operations.md](docs/operations.md) |
-| Reference (RBAC, API, config flow, troubleshooting) | [docs/reference.md](docs/reference.md) |
+| Reference (RBAC, MCP tools, config flow, troubleshooting) | [docs/reference.md](docs/reference.md) |
 | Knowledge sources | [knowledge/README.md](knowledge/README.md) |
 
 ## References

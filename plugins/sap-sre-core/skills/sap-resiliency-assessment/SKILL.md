@@ -17,7 +17,7 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 **Data Reuse (AAU Optimization)**: Before calling any API or proxy, check if the data was already retrieved earlier in this conversation. Reuse Advisor recommendations, landscape registry, VM properties, and ARG results from context.
 
-**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. The SRE Proxy is optional and runs only **live VM commands**; if it is not deployed or errors (timeout, 5xx, unreachable), continue with Advisor + Azure-native sources. Never block the skill on the proxy.
+**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. the MCP command proxy is optional and runs only **live VM commands**; if it is not deployed or errors (timeout, 5xx, unreachable), continue with Advisor + Azure-native sources. Never block the skill on the proxy.
 
 ## When to Use
 

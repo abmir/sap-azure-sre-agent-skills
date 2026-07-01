@@ -1,5 +1,5 @@
 """
-SAP SRE Proxy — MCP server (SCAFFOLD / starting point)
+SAP SRE command proxy — MCP server
 ======================================================
 
 Exposes the SAP live-command allowlist as **MCP tools** so the Azure SRE Agent can

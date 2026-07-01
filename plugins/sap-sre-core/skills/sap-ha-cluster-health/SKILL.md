@@ -20,15 +20,15 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 **Data Reuse (AAU Optimization)**: Before calling any API or proxy, check if the data was already retrieved earlier in this conversation. Reuse landscape registry, VM power states, config files, and AMS query results from context. Do not re-fetch data that is already available.
 
-**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. The SRE Proxy is optional and runs only **live VM commands**; if it is not deployed or errors (timeout, 5xx, unreachable), continue with stored blob configs + Azure-native sources (AMS, ARM API, Azure Monitor). Never block the skill on the proxy.
+**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. the MCP command proxy is optional and runs only **live VM commands**; if it is not deployed or errors (timeout, 5xx, unreachable), continue with stored blob configs + Azure-native sources (AMS, ARM API, Azure Monitor). Never block the skill on the proxy.
 
 ## Infrastructure Requirements
 
-This section covers what **deployed infrastructure** (Storage Account / SRE Proxy) enhances this skill — not to be confused with the operational tier modes (T1 / T3) in the `## Mode Selection` section below. The skill adapts automatically based on what is listed in the `## Deployed Infrastructure` section of Team Onboarding.
+This section covers what **deployed infrastructure** (Storage Account / MCP command proxy) enhances this skill — not to be confused with the operational tier modes (T1 / T3) in the `## Mode Selection` section below. The skill adapts automatically based on what is listed in the `## Deployed Infrastructure` section of Team Onboarding.
 
-- **No infrastructure listed** — Cluster state is inferred only from Internal Load Balancer backend pool health probes + AMS `Prometheus_HaClusterExporter_CL` + Activity Log (fencing = VM deallocate events). Cannot inspect `corosync.conf`, `SAPHanaSR-showAttr` output, SBD status, or SR hooks in `global.ini`. **Always disclose in the report header**: "Cluster diagnosis is approximate (ILB probes + AMS only). Deploy a config store for corosync / SBD / SR-hook visibility, or add the SRE Proxy for live `crm_mon`."
+- **No infrastructure listed** — Cluster state is inferred only from Internal Load Balancer backend pool health probes + AMS `Prometheus_HaClusterExporter_CL` + Activity Log (fencing = VM deallocate events). Cannot inspect `corosync.conf`, `SAPHanaSR-showAttr` output, SBD status, or SR hooks in `global.ini`. **Always disclose in the report header**: "Cluster diagnosis is approximate (ILB probes + AMS only). Deploy a config store for corosync / SBD / SR-hook visibility, or add the MCP command proxy for live `crm_mon`."
 - **Storage Account listed** — Also reads collected `crm-status.txt`, `saphanasr-showattr.txt`, `corosync.conf`, `sbd-config.txt`, and `global.ini` from the `sap-configs` blob container. Full HSR sync state + SOK / SFAIL visibility.
-- **SRE Proxy also listed** — Also pulls live `crm_mon`, live `SAPHanaSR-showAttr`, and live HSR state through the command proxy. Best fidelity for "what is happening right now" questions.
+- **MCP command proxy also listed** — Also pulls live `crm_mon`, live `SAPHanaSR-showAttr`, and live HSR state through the command proxy. Best fidelity for "what is happening right now" questions.
 
 ## Mode Selection
 
@@ -79,7 +79,7 @@ from datetime import datetime, timedelta, timezone
 # SUB_ID: Use subscription_id from Team Onboarding
 # AMS_WORKSPACE_ID: Use ams_workspace_id from Team Onboarding
 
-# PROXY_URL / PROXY_KEY: OPTIONAL — only when the SRE Proxy is deployed (live VM commands).
+# PROXY_URL / PROXY_KEY: OPTIONAL — only when the MCP command proxy is deployed (live VM commands).
 #   Use proxy_url and proxy_api_key from Team Onboarding. Do NOT read stored configs here —
 #   read them directly from the sap-configs blob (`az storage blob ... --auth-mode login`).
 

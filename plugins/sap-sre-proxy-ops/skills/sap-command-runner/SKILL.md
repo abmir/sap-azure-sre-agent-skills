@@ -1,23 +1,22 @@
 ---
 name: sap-command-runner
-description: "Runs allowlisted read-only commands on SAP VMs via a secure command proxy (Container App + Azure VM Run Command API). 14 read-only commands — zero changes to SAP environment. Users invoke directly for live VM queries; other skills invoke it for data collection."
+description: "Runs allowlisted read-only commands on SAP VMs via a secure MCP command proxy (Container App + Azure VM Run Command API). 14 read-only commands — zero changes to SAP environment. Users invoke directly for live VM queries; other skills invoke it for data collection."
 tools:
     - ExecutePythonCode
 ---
 
 ## Environment Configuration
 
-All environment-specific values (proxy URL, API key, SAP landscape) are provided via the Team Onboarding instructions. The agent reads these from the onboarding context at runtime. Do not hardcode environment values in this skill.
+All environment-specific values (MCP endpoint URL, API key, SAP landscape) are provided via the Team Onboarding instructions. The agent reads these from the onboarding context at runtime. Do not hardcode environment values in this skill.
 
 **Data Reuse (AAU Optimization)**: If the same command was already run on this VM earlier in this conversation, return the cached result instead of re-executing. Only re-execute if the user explicitly asks to refresh or re-run.
 
 ## Infrastructure Requirements
 
-This skill **requires the SRE Proxy** (live-command broker) — reachable **either** as an **MCP connector** (preferred) **or** the legacy REST proxy listed in the `## Deployed Infrastructure` section of Team Onboarding.
+This skill **requires the MCP command proxy** (live-command broker), registered as the **`sap-sre-proxy` MCP connector** (from the `sap-sre-proxy-ops` plugin's `.mcp.json`).
 
-- **Preferred — `sap-sre-proxy` MCP connector configured** (from the `sap-sre-proxy-ops` plugin's `.mcp.json`): call its tools directly — `list_allowed_commands`, `run_command`, `run_batch`. The agent invokes these natively; no Python/HTTP needed.
-- **Fallback — REST SRE Proxy listed** in Deployed Infrastructure: use the proxy URL + API key with the Python flow below.
-- **Neither present** — Respond exactly: "Live VM commands require the SRE Proxy. Add the `sap-sre-proxy` MCP connector (see the `sap-sre-proxy-ops` plugin) or deploy the REST proxy with `infra/deploy-sre-infra.ps1 -Mode Full`, then re-paste team onboarding. Until then, this skill is unavailable." Then stop. Do NOT attempt any proxy URL.
+- **Connector configured** — call its tools directly: `list_allowed_commands`, `run_command`, `run_batch`. The agent invokes these natively; no Python/HTTP needed. The MCP server enforces the allowlist and runs commands under its own managed identity.
+- **Connector missing** — Respond exactly: "Live VM commands require the MCP command proxy. Deploy it with `infra/deploy-mcp-proxy.ps1`, add the `sap-sre-proxy` MCP connector, then re-paste team onboarding. Until then, this skill is unavailable." Then stop.
 
 ## When to Use
 
@@ -39,43 +38,12 @@ Display command output **exactly as it appears on the VM** — preserve formatti
 
 ## Command Proxy
 
-**Preferred path — MCP connector.** If the `sap-sre-proxy` MCP connector is configured, call its tools directly instead of the REST flow below:
+Call the `sap-sre-proxy` MCP connector's tools directly:
 - `list_allowed_commands()` — discover the allowlist.
-- `run_command(vm, resource_group, command_id, sid, sidadm, instance)` — run one command.
-- `run_batch(vm, resource_group, command_ids, ...)` — run up to 6.
-Show the returned output verbatim. The MCP server enforces the same allowlist and runs commands under its own managed identity.
+- `run_command(vm, resource_group, command_id, subscription_id, sid, sidadm, instance)` — run one command. Always pass `subscription_id` — the proxy runs in a different subscription than the SAP VMs.
+- `run_batch(vm, resource_group, command_ids, ...)` — run up to 6 commands.
 
-**Fallback path — REST proxy.** Only if the MCP connector is not configured. The REST proxy uses **API key authentication** via the `X-API-Key` header (from Team Onboarding). **IMPORTANT:** always include `subscription_id` in the request body — the proxy runs in a different subscription than the SAP VMs.
-
-```python
-import requests
-import json
-
-# These values come from Team Onboarding context:
-# PROXY_URL = proxy URL from Data Sources section
-# API_KEY = API key from proxy auth section
-# SAP_SUB = SAP Subscription ID from Agent Identity section
-
-def run_command(command_id, vm="AB1vm", rg="RG_SAP_CUS_AB1", sidadm=None, instance="00", sid=None):
-    body = {
-        "vm": vm,
-        "rg": rg,
-        "command_id": command_id,
-        "subscription_id": SAP_SUB  # REQUIRED — proxy is in a different subscription
-    }
-    if sidadm: body["sidadm"] = sidadm
-    if instance: body["instance"] = instance
-    if sid: body["sid"] = sid
-    resp = requests.post(f"{PROXY_URL}/api/command",
-        headers={"X-API-Key": API_KEY, "Content-Type": "application/json"},
-        json=body, timeout=180)
-    return {"status": resp.status_code, "output": resp.text}
-
-def list_available_commands():
-    resp = requests.get(f"{PROXY_URL}/api/commands",
-        headers={"X-API-Key": API_KEY}, timeout=30)
-    return resp.json().get("commands", {}) if resp.status_code == 200 else {}
-```
+Show the returned output **verbatim**. The MCP server enforces the same allowlist and runs commands under its own managed identity.
 
 ### Critical: Split SID Systems
 
@@ -119,7 +87,7 @@ When the user says "run crm_mon on AB1", look up AB1 in the landscape inventory 
 
 ## Error Handling
 
-If the command proxy is unreachable or returns an error, inform the user:
-- 401: "Command proxy authentication failed. Check the API key in Team Onboarding."
-- 502/504: "VM did not respond within timeout. The VM may be stopped or unresponsive."
-- Connection error: "Command proxy is unreachable. Verify the proxy URL and that the Container App is running."
+If the MCP command proxy is unreachable or returns an error, inform the user:
+- Authentication failure: "Command proxy authentication failed. Check the MCP connector's API key in Team Onboarding."
+- Timeout: "VM did not respond within timeout. The VM may be stopped or unresponsive."
+- Connection error: "Command proxy is unreachable. Verify the `sap-sre-proxy` MCP connector and that the Container App is running."

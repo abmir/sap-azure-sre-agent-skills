@@ -23,15 +23,15 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 **Data Reuse (AAU Optimization)**: Before calling any API or proxy, check if the data was already retrieved earlier in this conversation. Reuse landscape registry, VM power states, config files, and AMS query results from context. Do not re-fetch data that is already available.
 
-**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. The SRE Proxy is optional and runs only **live VM commands**; if it is not deployed or errors (timeout, 5xx, unreachable), continue with stored blob configs + Azure-native sources (AMS, ARM API, Azure Monitor). Never block the skill on the proxy.
+**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. the MCP command proxy is optional and runs only **live VM commands**; if it is not deployed or errors (timeout, 5xx, unreachable), continue with stored blob configs + Azure-native sources (AMS, ARM API, Azure Monitor). Never block the skill on the proxy.
 
 ## Infrastructure Requirements
 
 This skill adapts automatically based on what infrastructure is listed in the `## Deployed Infrastructure` section of Team Onboarding.
 
-- **No infrastructure listed** — RCA uses only AMS telemetry + Activity Log + Resource Health + ARM API. No config files, no live OS state. Still produces a meaningful timeline and identifies infrastructure-layer root causes, but cannot inspect sysctl, `global.ini`, corosync, or any OS-level config. **Always disclose in the report header**: "Config-layer and live-OS evidence are unavailable (no Storage Account or SRE Proxy in Deployed Infrastructure). For deeper RCA, deploy a config store and/or proxy."
+- **No infrastructure listed** — RCA uses only AMS telemetry + Activity Log + Resource Health + ARM API. No config files, no live OS state. Still produces a meaningful timeline and identifies infrastructure-layer root causes, but cannot inspect sysctl, `global.ini`, corosync, or any OS-level config. **Always disclose in the report header**: "Config-layer and live-OS evidence are unavailable (no Storage Account or MCP command proxy in Deployed Infrastructure). For deeper RCA, deploy a config store and/or proxy."
 - **Storage Account listed** — Also reads collected configs (sysctl, `global.ini`, corosync, etc.) from the `sap-configs` blob container via `RunAzCliReadCommands`. Can correlate "sysctl change at T-2h" with "HANA OOM at T".
-- **SRE Proxy also listed** — Also pulls live OS state at the moment of the incident (current `dmesg` tail, current process list, current `crm_mon`) through the command proxy. Best fidelity.
+- **MCP command proxy also listed** — Also pulls live OS state at the moment of the incident (current `dmesg` tail, current process list, current `crm_mon`) through the command proxy. Best fidelity.
 
 ## When to Use
 

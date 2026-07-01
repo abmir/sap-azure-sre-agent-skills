@@ -36,10 +36,9 @@ sap-azure-sre-agent/
 
 | Folder | What it holds | When you need it |
 |--------|---------------|------------------|
-| `infra/` | `deploy-sre-infra.ps1` (config store + optional proxy), `deploy-mcp-proxy.ps1` (MCP server), `sap-sre-agent-role.json` (least-privilege RBAC role) | Phase 1 (config store) and Phase 2 (proxy) |
+| `infra/` | `deploy-sre-infra.ps1` (config store), `deploy-mcp-proxy.ps1` (MCP command proxy), `sap-sre-agent-role.json` (least-privilege RBAC role) | Phase 1 (config store) and Phase 2 (proxy) |
 | `collector/` | `collect-sap-configs.sh` — runs on your SAP VMs (cron) to upload configs to storage | Phase 1, if you want config validation |
-| `proxy/` | **Optional** REST proxy (FastAPI Container App) for live read-only VM commands | Phase 2, for live commands / self-healing |
-| `proxy-mcp/` | **Optional** MCP-server version of the proxy (its target form) — same commands as native MCP tools | Phase 2, the preferred future form of the proxy |
+| `proxy-mcp/` | **Optional** MCP command proxy — the read-only VM commands as native MCP tools, registered as a connector | Phase 2, for live commands / self-healing |
 
-> **Rule of thumb:** `plugins/`, `knowledge/`, `config/`, `onboarding/`, `docs/` = the agent reads them. `infra/`, `proxy/`, `proxy-mcp/`, `collector/` = you deploy them once, and all four are **optional** except that `infra/` + `collector/` are needed for the config store.
+> **Rule of thumb:** `plugins/`, `knowledge/`, `config/`, `onboarding/`, `docs/` = the agent reads them. `infra/`, `proxy-mcp/`, `collector/` = you deploy them once, and all are **optional** except that `infra/` + `collector/` are needed for the config store.
 

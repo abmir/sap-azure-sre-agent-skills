@@ -19,14 +19,14 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 **Data Reuse (AAU Optimization)**: Before calling any API or proxy, check if the data was already retrieved earlier in this conversation. Reuse landscape registry, VM power states, config files, and AMS query results from context. Do not re-fetch data that is already available.
 
-**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. The SRE Proxy is optional and runs only **live VM commands** (this skill's remediation actions require it); if it is not deployed or errors (timeout, 5xx, unreachable), continue with stored blob configs + Azure-native sources (AMS, ARM API, Azure Monitor). Never block the skill on the proxy.
+**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. The MCP command proxy is optional and runs only **live VM commands** (this skill's remediation actions require it); if it is not deployed or errors (timeout, 5xx, unreachable), continue with stored blob configs + Azure-native sources (AMS, ARM API, Azure Monitor). Never block the skill on the proxy.
 
 ## Infrastructure Requirements
 
-This skill **requires the SRE Proxy** for any remediation action — reachable **either** as the **`sap-sre-proxy` MCP connector** (preferred) **or** the legacy REST proxy in the `## Deployed Infrastructure` section of Team Onboarding. Detection-only behavior works without either, but the skill cannot autonomously fix anything without a live-command path.
+This skill **requires the MCP command proxy** for any remediation action, registered as the **`sap-sre-proxy` MCP connector**. Detection-only behavior works without it, but the skill cannot autonomously fix anything without a live-command path.
 
-- **If neither is present** — Respond exactly: "Automated self-healing requires the SRE Proxy. I can DETECT issues from AMS / Activity Log / Azure Monitor but cannot REMEDIATE without it. Add the `sap-sre-proxy` MCP connector (see the `sap-sre-proxy-ops` plugin) or deploy the REST proxy with `infra/deploy-sre-infra.ps1 -Mode Full`. Until then, this skill will only alert — not auto-act." Then stop. Do NOT attempt any proxy URL.
-- **If the MCP connector or REST proxy is present** — Run the full flow below. T4 guardrails apply (allowlist, rate limit, kill switch). Prefer the MCP tools (`run_command`) when the connector is configured.
+- **If the connector is missing** — Respond exactly: "Automated self-healing requires the MCP command proxy. I can DETECT issues from AMS / Activity Log / Azure Monitor but cannot REMEDIATE without it. Deploy it with `infra/deploy-mcp-proxy.ps1` and add the `sap-sre-proxy` MCP connector. Until then, this skill will only alert — not auto-act." Then stop.
+- **If the connector is present** — Run the full flow below. T4 guardrails apply (allowlist, rate limit, kill switch). Use the MCP tools (`run_command`) via the SAP Command Executor skill.
 
 ## Tier: T4 — Autonomous Remediation
 
@@ -57,19 +57,19 @@ This skill **requires the SRE Proxy** for any remediation action — reachable *
 - For Azure Resource Manager queries: Use the built-in `GetArmResourceAsJson` or `RunAzCliReadCommands` tools
 - For Log Analytics queries: Use the built-in `QueryLogAnalyticsByWorkspaceId` tool  
 - For metrics: Use the built-in `GetMetricTimeSeriesElementsForAzureResource` tool
-- For proxy HTTP calls: Use `ExecutePythonCode` with `X-API-Key` header (API key from Team Onboarding)
+- For live VM commands: invoke the **SAP Command Executor** skill, which calls the `sap-sre-proxy` MCP connector — do NOT make direct HTTP calls
 
 ```python
-# Only use ExecutePythonCode for proxy HTTP calls. Use built-in tools for Azure API access.
-import requests, json
+# Use built-in tools for Azure API access; use the SAP Command Executor skill for VM commands.
+import json
 from datetime import datetime, timedelta, timezone
 
 # SUB_ID: Use subscription_id from Team Onboarding
 # AMS_WORKSPACE_ID: Use ams_workspace_id from Team Onboarding
 
-# PROXY_URL / PROXY_KEY: required for this skill (live remediation commands via the SRE Proxy).
-#   Use proxy_url and proxy_api_key from Team Onboarding. Stored configs are read directly from
-#   the sap-configs blob (`az storage blob ... --auth-mode login`), not through the proxy.
+# Live remediation commands run via the SAP Command Executor skill (the `sap-sre-proxy` MCP
+#   connector). Stored configs are read directly from the sap-configs blob
+#   (`az storage blob ... --auth-mode login`), not through the proxy.
 
 # All VM commands are executed via the SAP Command Executor skill
 # This skill determines WHAT to do, Command Executor does HOW

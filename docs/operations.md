@@ -2,19 +2,18 @@
 
 ## Operations
 
-### Updating the Proxy (Code Changes)
+### Updating the MCP Command Proxy (Code Changes)
 
-After editing `proxy/app.py`:
+After editing `proxy-mcp/server.py`:
 
 ```powershell
-# The deploy script's flow — copy collector into build context, build image, restart app
-Copy-Item collector\collect-sap-configs.sh proxy\collect-sap-configs.sh -Force
-az acr build --registry <acr-name> -t sre-proxy:latest .\proxy
-az containerapp update -n sap-sre-proxy -g rg-sre-proxy `
-    --image <acr-name>.azurecr.io/sre-proxy:latest
+# Rebuild the image and restart the Container App
+az acr build --registry <acr-name> -t sre-mcp:latest .\proxy-mcp
+az containerapp update -n sap-sre-mcp -g rg-sre-proxy-mcp `
+    --image <acr-name>.azurecr.io/sre-mcp:latest
 ```
 
-> **Note**: `proxy/collect-sap-configs.sh` is gitignored — it's a build artifact copied from `collector/` at build time. Always edit the source in `collector/`.
+> **Note**: re-run `infra/deploy-mcp-proxy.ps1` to rebuild and redeploy in one step.
 
 ### Updating Skills
 

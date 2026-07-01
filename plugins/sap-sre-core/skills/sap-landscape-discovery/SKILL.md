@@ -17,7 +17,7 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 **Data Reuse (AAU Optimization)**: Before calling any API or proxy, check if the data was already retrieved earlier in this conversation. Reuse landscape registry, VM power states, config files, and AMS query results from context. Do not re-fetch data that is already available.
 
-**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. The SRE Proxy is optional and runs only **live VM commands**; if it is not deployed or errors (timeout, 5xx, unreachable), continue with stored blob configs + Azure-native sources (AMS, ARM API, Azure Monitor). Never block the skill on the proxy.
+**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. the MCP command proxy is optional and runs only **live VM commands**; if it is not deployed or errors (timeout, 5xx, unreachable), continue with stored blob configs + Azure-native sources (AMS, ARM API, Azure Monitor). Never block the skill on the proxy.
 
 ## When to Use
 
@@ -58,7 +58,7 @@ import requests, json
 
 # SUB_ID: Use subscription_id from Team Onboarding
 
-# PROXY_URL / PROXY_KEY: OPTIONAL — only when the SRE Proxy is deployed (live VM commands).
+# PROXY_URL / PROXY_KEY: OPTIONAL — only when the MCP command proxy is deployed (live VM commands).
 #   Use proxy_url and proxy_api_key from Team Onboarding. Do NOT read stored configs here —
 #   read them directly from the sap-configs blob (`az storage blob ... --auth-mode login`).
 

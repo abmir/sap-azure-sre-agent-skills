@@ -11,17 +11,17 @@
 │  Tools: ARM API, AMS KQL, Azure Monitor, CLI, Python     │
 │  Knowledge: SAP landscape, SAP Notes, STAF references    │
 └──────────┬────────────────┬────────────────┬─────────────┘
-           │ Azure APIs   │ + Config Store │ + Live Proxy
-           │ (always on)  │ (storage)      │ (proxy)
+           │ Azure APIs   │ + Config Store │ + MCP Proxy
+           │ (always on)  │ (storage)      │ (connector)
            ▼                ▼                ▼
    ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐
-   │ Azure APIs  │  │ Config Store │  │ SRE Proxy        │
+   │ Azure APIs  │  │ Config Store │  │ MCP Cmd Proxy    │
    │ + AMS / LAW │  │ (Storage)    │  │ (Container App)  │
-   │ ARM, Cost   │  │ sap-configs/ │  │ /api/command     │
-   │ Monitor,    │  │   SID/host/  │  │ /api/batch       │
+   │ ARM, Cost   │  │ sap-configs/ │  │ run_command      │
+   │ Monitor,    │  │   SID/host/  │  │ run_batch        │
    │ Advisor     │  │   latest/    │  │ 14-cmd allowlist │
-   │             │  │ Agent UMI:   │  │ Entra ID + API   │
-   │             │  │ Blob Reader  │  │ proxy-umi        │
+   │             │  │ Agent UMI:   │  │ MCP + api-key    │
+   │             │  │ Blob Reader  │  │ sre-mcp-umi      │
    └─────────────┘  └──────┬───────┘  └────────┬─────────┘
                            │ upload            │ ARM
                            │ (weekly cron +    │ run-command
@@ -52,6 +52,6 @@ STAF check definitions live in the public [`Azure/sap-automation-qa`](https://gi
 | Maintenance handler (basic) | "Any scheduled maintenance?" | — | Scheduled Events API + Service Health |
 | **Config validation (STAF)** | "Run config checks for AB1" | **Storage Account** | STAF YAML fetched live from `Azure/sap-automation-qa` on GitHub, compared against blob-stored VM configs — entirely in-skill, no proxy |
 | **Config-enriched RCA / perf / cluster** | "Cross-layer RCA for AB1" | Storage Account | Adds stored config files (sysctl, global.ini, corosync) to incident / performance / HA skills |
-| **Live VM commands** | "Run uptime on AB1vm" | **SRE Proxy** | Proxy → ARM run-command API (14-command allowlist, read-only) |
-| **Self-healing remediation** | Auto: `/hana/log` full → log backup | SRE Proxy | Proxy executes restricted write commands within strict guardrails |
+| **Live VM commands** | "Run uptime on AB1vm" | **MCP command proxy** | Proxy → ARM run-command API (14-command allowlist, read-only) |
+| **Self-healing remediation** | Auto: `/hana/log` full → log backup | MCP command proxy | Proxy executes restricted write commands within strict guardrails |
 
