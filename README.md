@@ -59,11 +59,11 @@ Each phase is independent — stop after any phase. Deeper detail lives in [docs
    - **A. Subscription (simplest):** grant the roles once at the **subscription**. The assignment **inherits to every resource — the subscription itself and all of its resource groups** — so you never enumerate RGs, and it also reaches the sources that exist only at subscription level (Service Health, cross-RG cost / RI, Defender).
    - **B. Resource-group only (least privilege):** if the customer won't grant at subscription scope, grant the roles on **every relevant RG** — SAP app RGs (`RG_SAP_*`), each ACSS/managed RG (`mrg-*`), and the AMS workspace RG (`mrg-sapmon-*`). Per-system skills work fully; you lose only the **subscription-only** sources above (the skills say so when asked). See [RBAC scoping](docs/reference.md#rbac-scoping--rg-only-vs-subscription) · [SRE Agent permissions](https://learn.microsoft.com/azure/sre-agent/permissions).
 
+   <details>
+   <summary>Show the <code>az role assignment</code> commands</summary>
+
    ```bash
    AGENT=<agent-mi-object-id>; SUB=<sub-id>
-
-   # (both models) Log Analytics query on the AMS workspace — scope to the AMS RG:
-   az role assignment create --assignee-object-id $AGENT --assignee-principal-type ServicePrincipal --role "Log Analytics Reader" --scope /subscriptions/$SUB/resourceGroups/<mrg-sapmon-RG>
 
    # Model A — subscription scope (simplest): resource state + metrics + cost across everything
    for R in "Reader" "Monitoring Reader" "Cost Management Reader"; do
@@ -73,7 +73,12 @@ Each phase is independent — stop after any phase. Deeper detail lives in [docs
    # Model B — per RG (instead of Model A): repeat for EACH SAP RG + each mrg-* (ACSS) + the mrg-sapmon-* (AMS) RG
    az role assignment create --assignee-object-id $AGENT --assignee-principal-type ServicePrincipal --role "Reader"           --scope /subscriptions/$SUB/resourceGroups/<RG>
    az role assignment create --assignee-object-id $AGENT --assignee-principal-type ServicePrincipal --role "Monitoring Reader" --scope /subscriptions/$SUB/resourceGroups/<RG>
+
+   # (both models) Log Analytics query on the AMS workspace — scope to the AMS RG:
+   az role assignment create --assignee-object-id $AGENT --assignee-principal-type ServicePrincipal --role "Log Analytics Reader" --scope /subscriptions/$SUB/resourceGroups/<mrg-sapmon-RG>
    ```
+
+   </details>
 
 3. **Add telemetry connectors.** Builder → **Connectors**:
    - **AMS Log Analytics workspace** — required for the HANA / OS / cluster health layers (the agent queries it by workspace ID).
