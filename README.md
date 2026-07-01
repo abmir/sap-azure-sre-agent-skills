@@ -85,7 +85,11 @@ Each phase is independent — stop after any phase. Deeper detail lives in [docs
    - **Application Insights** *(optional)* — only if your app tier emits to it; **additive** to AMS/ARM, not a replacement.
    - **Notifications — Teams and/or Outlook** *(optional, recommended)* — lets the agent send investigation **summaries** (root cause, impact, recommended actions) to a channel or inbox. Each uses an **OAuth sign-in** (the agent sends *as* that account) plus a **user-assigned managed identity** — create one and reuse it across connectors. The incident-analysis and self-healing skills post here when configured; otherwise they report in chat.
    - **Docs / knowledge** *(optional)* — e.g. an **MCP** connector to Microsoft Learn docs (or GitHub / Azure DevOps) to ground answers.
-4. **Connect the repo.** Builder → **Code Access** → connect your fork (skills' source + knowledge base).
+4. **Connect the repo (Code Access).** Builder → **Code Access** → connect your fork. This lets the agent **read and cite** the repo's knowledge + reference content during investigations (the skills themselves install separately in step 5). What it uses:
+   - **`knowledge/`** — the verbatim **SAP Note 1928533** (supported products) and **`sap-certified-vms.json`** (HANA/SAP-certified VM index) that the deployment-readiness skill cites.
+   - **`config/`** — the **SAP landscape inventory** template + example (SIDs, resource groups, VMs, roles).
+   - **`docs/`** — architecture, adoption planner, setup, and reference guides.
+   - **`infra/`, `collector/`, `proxy-mcp/`** — the IaC, collector script, and MCP proxy code (for explaining or troubleshooting the deployment).
 5. **Install skills.** Builder → **Plugins** → install **`sap-sre-core`**.
 6. **Onboard.** Settings → **Team Onboarding** → paste your filled [onboarding template](onboarding/team-onboarding.template.md) (systems, subscription, AMS workspace).
 7. **Try it:** *"What SAP systems do I have?"* · *"Is AB1 healthy?"* · *"How much does AB1 cost?"*
