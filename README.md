@@ -262,12 +262,17 @@ sap-azure-sre-agent/
 
 ## Setup Guide
 
+**Most people only need the [Quick start — 3 phases](#quick-start--implement-in-3-phases) above.** The section below is the full, click-by-click reference — expand it only if you want the exhaustive detail.
+
+<details>
+<summary><b>Full setup detail (advanced) — Steps 1–17</b></summary>
+
 The setup has three phases:
 
 | Phase | What | Where | Effort |
 |-------|------|-------|--------|
-| **1. Platform** | Create agent, enable tools, import skills, add connectors | sre.azure.com portal | ~30 min |
-| **2. Infrastructure** | Deploy proxy, storage, identities; install collector on VMs | Azure CLI / PowerShell | ~20 min |
+| **1. Platform** | Create agent, enable tools, install skills, connect repo | sre.azure.com portal | ~30 min |
+| **2. Infrastructure** | Deploy storage + collector (and optional proxy), identities | Azure CLI / PowerShell | ~20 min |
 | **3. Onboarding** | Paste team context, verify end-to-end | sre.azure.com portal | ~10 min |
 
 ---
@@ -495,6 +500,8 @@ az storage blob list --account-name <storage> --container-name sap-configs `
     --prefix "<SID>/<host>/latest/" --auth-mode login `
     --query "[].{name:name, modified:properties.lastModified}" -o table
 ```
+
+</details>
 
 ---
 
