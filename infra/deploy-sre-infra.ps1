@@ -17,16 +17,15 @@
                      Skips the proxy (ACR, VNet, Container Apps env,
                      Container App, Entra ID Easy Auth). 11 skills functional
                      (adds STAF config validation and config-enriched skills).
-                     If -SreAgentUmiPrincipalId is supplied, the SRE Agent's
-                     own UMI is granted Storage Blob Data Reader on the
-                     container so the Config Validator skill can read configs
-                     directly without a proxy.
+                     The SRE Agent's own MI is granted Storage Blob Data Reader
+                     so ALL config-consuming skills read configs directly from
+                     blob — no proxy involved. Pass -SreAgentUmiPrincipalId.
 
-      Full         — Default. Creates everything: collector UMI, storage,
-                     proxy UMI, ACR + image, VNet, Container Apps env,
-                     Container App, Entra ID Easy Auth, custom RBAC role.
-                     All 13 skills functional including live VM commands and
-                     self-healing.
+      Full         — Default. Everything in ConfigStore PLUS the OPTIONAL live-command
+                     proxy: proxy UMI, ACR + image, VNet, Container Apps env,
+                     Container App, Entra ID Easy Auth. The proxy is used ONLY for
+                     live VM commands + self-healing — it is NEVER in the config-read
+                     path (the agent MI still reads configs directly). All 13 skills.
 
 .PARAMETER SubscriptionId
     Subscription where the resource group will be created. Required in all modes.
@@ -39,11 +38,11 @@
     Required for ConfigStore and Full modes. Ignored for AzureNative.
 
 .PARAMETER SreAgentUmiPrincipalId
-    Optional. Object/Principal ID of the SRE Agent's Managed Identity (visible on
-    sre.azure.com under Identity). If supplied (recommended for ConfigStore mode),
-    the agent UMI is granted Storage Blob Data Reader on the sap-configs container
-    so the Config Validator skill can read configs directly. In Full mode this is
-    optional — without it, the agent reads configs through the proxy.
+    Object/Principal ID of the SRE Agent's Managed Identity (visible on
+    sre.azure.com under Identity). Grant this identity Storage Blob Data Reader on
+    the sap-configs container so EVERY config-consuming skill reads configs directly
+    from blob. Strongly recommended for both ConfigStore and Full modes. The proxy
+    is never used to read configs.
 
 .PARAMETER ResourceGroupName
     Resource group name. Default: rg-sre-proxy
@@ -248,36 +247,33 @@ if ($deployerIp) {
 
 $stScope = "/subscriptions/$SubscriptionId/resourceGroups/$RG/providers/Microsoft.Storage/storageAccounts/$StorageAccountName"
 
-# Assign storage RBAC to proxy UMI (read/write configs) — Full mode only
-if ($Mode -eq 'Full') {
-    foreach ($role in @("Storage Blob Data Owner", "Storage Blob Data Contributor")) {
-        az role assignment create --assignee-object-id $PROXY_UMI_PRINCIPAL_ID --assignee-principal-type ServicePrincipal `
-            --role $role --scope $stScope --output none 2>$null
-    }
-    Write-OK "Proxy UMI storage roles assigned"
-}
+# ── Config-store access model (decoupled from the proxy) ──
+# The SRE Agent reads configs DIRECTLY from blob using its OWN managed identity.
+# The proxy is NEVER in the config-read path (it is optional and only runs live VM
+# commands). So on the storage account:
+#   • Collector UMI  -> Storage Blob Data Contributor (writes configs from the VMs)
+#   • SRE Agent MI   -> Storage Blob Data Reader       (reads configs directly)
+#   • Proxy UMI      -> NO storage role (commands only)
 
 # Assign storage RBAC to collector UMI (upload configs from SAP VMs)
 az role assignment create --assignee-object-id $COLLECTOR_UMI_PRINCIPAL_ID --assignee-principal-type ServicePrincipal `
     --role "Storage Blob Data Contributor" --scope $stScope --output none 2>$null
-Write-OK "Collector UMI storage role assigned"
+Write-OK "Collector UMI storage role assigned (Storage Blob Data Contributor — write)"
 
-# Optionally grant the SRE Agent UMI direct Storage Blob Data Reader (required for Mode 2,
-# optional for Mode 3 — lets Config Validator skill read configs without going through the proxy)
+# Grant the SRE Agent MI direct Storage Blob Data Reader. This is REQUIRED whenever a
+# config store is deployed (both ConfigStore and Full) — every config-consuming skill
+# reads blobs directly via the agent's own identity, not through the proxy.
 if ($SreAgentUmiPrincipalId) {
     az role assignment create --assignee-object-id $SreAgentUmiPrincipalId --assignee-principal-type ServicePrincipal `
         --role "Storage Blob Data Reader" --scope $stScope --output none 2>$null
-    Write-OK "SRE Agent UMI granted Storage Blob Data Reader (direct config access)"
+    Write-OK "SRE Agent MI granted Storage Blob Data Reader (direct config access — no proxy)"
 } else {
-    if ($Mode -eq 'ConfigStore') {
-        Write-Warn "-SreAgentUmiPrincipalId not provided. In Mode 2 the Config Validator skill"
-        Write-Warn "  needs Storage Blob Data Reader on the sap-configs container. Either re-run"
-        Write-Warn "  this script with -SreAgentUmiPrincipalId <agent-mi-object-id>, or assign"
-        Write-Warn "  the role manually:"
-        Write-Host "     az role assignment create --assignee-object-id <agent-mi> ``" -ForegroundColor Gray
-        Write-Host "       --assignee-principal-type ServicePrincipal ``" -ForegroundColor Gray
-        Write-Host "       --role 'Storage Blob Data Reader' --scope $stScope" -ForegroundColor Gray
-    }
+    Write-Warn "-SreAgentUmiPrincipalId not provided. The SRE Agent MI needs Storage Blob Data"
+    Write-Warn "  Reader on the sap-configs container to read configs directly. Re-run with"
+    Write-Warn "  -SreAgentUmiPrincipalId <agent-mi-object-id>, or assign it manually:"
+    Write-Host "     az role assignment create --assignee-object-id <agent-mi> ``" -ForegroundColor Gray
+    Write-Host "       --assignee-principal-type ServicePrincipal ``" -ForegroundColor Gray
+    Write-Host "       --role 'Storage Blob Data Reader' --scope $stScope" -ForegroundColor Gray
 }
 
 # Assign deployer blob access

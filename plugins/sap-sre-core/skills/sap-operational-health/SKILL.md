@@ -19,7 +19,7 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 **Data Reuse (AAU Optimization)**: Before calling any API or proxy, check if the data was already retrieved earlier in this conversation. Reuse landscape registry, VM power states, config files, and AMS query results from context. Do not re-fetch data that is already available.
 
-**Proxy Fallback**: If the config proxy or command proxy returns an error (timeout, 5xx, unreachable), inform the user and continue with Azure-native data sources only (AMS, ARM API, Azure Monitor). Do not block the entire skill on a proxy failure.
+**Config reads & proxy fallback**: Stored SAP/OS configs are read **directly from the `sap-configs` blob container using the agent's own Managed Identity** (`--auth-mode login`) — there is **no config proxy**. The SRE Proxy is optional and runs only **live VM commands**; if it is not deployed or errors (timeout, 5xx, unreachable), continue with stored blob configs + Azure-native sources (AMS, ARM API, Azure Monitor). Never block the skill on the proxy.
 
 ## When to Use
 
@@ -38,8 +38,8 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 | Azure VM Power State | Primary | Real-time | Running/stopped/deallocated |
 | AMS Log Analytics | Primary | 2-5 min | HANA availability, OS metrics, Pacemaker state, SAP processes |
 | Activity Log | Primary | Real-time | Recent changes |
-| **Command proxy `/batch`** | **Primary** | **Live** | **ethtool output, PPG validation, accelerated networking, VM configs** |
-| Config Proxy (blob) | Fallback | Cron (4-6h) | ethtool output, VM configs — **only if command proxy fails** |
+| **`sap-configs` blob (agent MI, direct)** | **Primary for stored configs** | Cron (weekly) | ethtool output, VM configs, accelerated networking — read **directly with the agent's own Managed Identity** (`az storage blob ... --auth-mode login`); **no proxy** |
+| Command proxy `/batch` (optional) | Live enrichment only | Live | Freshest ethtool / PPG / live VM state — **only if** the optional SRE Proxy is deployed |
 
 ## Authentication
 
@@ -57,8 +57,9 @@ from datetime import datetime, timedelta, timezone
 # SUB_ID: Use subscription_id from Team Onboarding
 # AMS_WORKSPACE_ID: Use ams_workspace_id from Team Onboarding
 
-# PROXY_URL: Use config_proxy_url from Team Onboarding
-# PROXY_KEY: Use config_proxy_api_key from Team Onboarding
+# PROXY_URL / PROXY_KEY: OPTIONAL — only when the SRE Proxy is deployed (live VM commands).
+#   Use proxy_url and proxy_api_key from Team Onboarding. Do NOT read stored configs here —
+#   read them directly from the sap-configs blob (`az storage blob ... --auth-mode login`).
 
 # COMMAND_PROXY_URL: Use command_proxy_url from Team Onboarding
 # COMMAND_PROXY_KEY: Use command_proxy_api_key from Team Onboarding

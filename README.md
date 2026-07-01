@@ -32,6 +32,29 @@ The agent consumes this repo through two GitHub connections (plus one manual pas
 
 Install only the plugins your tier supports. A security-strict customer installs just `sap-sre-core` and never sees the proxy skills.
 
+## Quick start — implement in 3 phases
+
+Pick your components with the [Adoption planner](#adoption-planner--mix--match-by-phase); this is the simplest happy path. Each phase is independent — stop after any phase.
+
+**Phase 0 — Azure-native (≈30 min, no infrastructure)**
+1. Create an agent at [sre.azure.com](https://sre.azure.com); note its Managed Identity.
+2. Grant that identity **Reader** + **Monitoring Reader** on your SAP resource groups (and **Cost Management Reader** at subscription scope).
+3. **Builder → Code Access** → connect your fork of this repo (skills' source + knowledge).
+4. **Builder → Plugins** → install **`sap-sre-core`** (10 skills).
+5. Ask: *"What SAP systems do I have?"*, *"Is AB1 healthy?"*, *"How much does AB1 cost?"*
+
+**Phase 1 — Config store (≈1 hr) — adds STAF validation + config-enriched RCA/perf/HA**
+6. Deploy storage + collector: `infra/deploy-sre-infra.ps1 -Mode ConfigStore -SubscriptionId <sub> -StorageAccountName <name> -SreAgentUmiPrincipalId <agent-mi-object-id>`. This creates the `sap-configs` storage and grants the **agent MI Storage Blob Data Reader** (the agent reads configs **directly** — no proxy).
+7. VNet-integrate the agent and allow its subnet on the storage firewall (so the private storage is reachable).
+8. Assign the **collector UMI** to your SAP VMs and run the collector (via `az vm run-command`).
+9. **Builder → Plugins** → install **`sap-sre-config`**. Ask: *"Run config checks for AB1."*
+
+**Phase 2 — Live commands (optional, ≈1 hr) — adds command-runner + self-healing**
+10. Deploy the optional proxy: `infra/deploy-sre-infra.ps1 -Mode Full ...` (its own resource group; commands only, no storage role).
+11. Add the proxy URL + key to **Team Onboarding**, then **Builder → Plugins** → install **`sap-sre-proxy-ops`**. Ask: *"Run uptime on AB1vm."*
+
+> Full detail for each step is in the [Setup Guide](#setup-guide) below. Deferring a piece (e.g. ServiceNow, SAP Cloud ALM / Focus Run telemetry) is expected — see the [Adoption planner](#adoption-planner--mix--match-by-phase).
+
 ## Architecture
 
 ![Azure SRE Agent for SAP Workloads — architecture](docs/sap-on-azure-sre-agent.png)
@@ -90,6 +113,8 @@ STAF check definitions live in the public [`Azure/sap-automation-qa`](https://gi
 ## Adoption Tiers
 
 The agent supports three deployment tiers. Each tier is a strict superset of the previous one — start with Azure-native, add a config store when you need config-level visibility, add the proxy when you're ready for live commands. Skills auto-detect what's available from the `## Deployed Infrastructure` section in Team Onboarding — no mode numbers to manage.
+con
+> **These three tiers are *presets*, not a rigid ladder.** Every box in the [architecture](#architecture) is **independently optional** and can be adopted in any **phase**. If you want to mix and match — e.g. collect configs to storage but *not* deploy the proxy, keep SAP telemetry in SAP Cloud ALM / Focus Run for now, or defer ServiceNow — see the [Adoption planner](#adoption-planner--mix--match-by-phase) below.
 
 | Tier | What's Deployed | Capabilities | Customer Profile | Effort |
 |:----:|----------------|--------------|------------------|:------:|
@@ -130,6 +155,60 @@ How each of the 13 custom skills behaves based on what infrastructure is deploye
 
 **Net skill counts**: No infra = 6 full + 4 degraded = 10 working. + Storage = 11 full + 2 blocked. + Storage + Proxy = 13 full.
 
+## Adoption planner — mix & match by phase
+
+The three tiers are **presets**. In practice each customer enables a **different subset** of the architecture, often across **phases**. This works because every skill **auto-detects** what's present (from the `## Deployed Infrastructure` section of Team Onboarding) and **degrades gracefully** when a component is absent. Turn on only what you need now; add the rest later by editing onboarding and (if it adds a skill) installing the matching plugin.
+
+### Component menu — everything is independently optional
+
+| Component (from the architecture) | What it unlocks | Requires | If absent, skills… | Typical phase |
+|-----------------------------------|-----------------|----------|--------------------|:-------------:|
+| **A. SRE Agent + MI + RBAC** (RG_SRE_Agent) | The agent itself — mandatory | Reader + Monitoring Reader on SAP RGs | (nothing runs) | 1 |
+| **B. Skills via Plugin Marketplace** | The custom SAP skills (install per tier) | A + your repo fork | fewer skills available | 1 |
+| **C. Repo via Code Access** | Knowledge: inventory, cert data, docs | A + fork | lose repo-sourced knowledge | 1 |
+| **D. Azure platform data sources** (Monitor, Resource Graph, Cost, Advisor, Health, Activity Log) | Infra-level health, cost, resiliency, RCA | just RBAC (always on) | — | 1 |
+| **E. SAP telemetry — AMS** (Azure Monitor for SAP) | HANA/OS metric depth for health/trend/perf | AMS deployed | fall back to VM-level metrics only | 1 or 2 |
+| **E′. SAP telemetry — SAP Cloud ALM / Focus Run** | SAP-app-level signals from a non-Azure source | Connector (MCP/HTTP) | skills use whatever telemetry *is* present | usually 2 |
+| **F. Config Store** — Storage Account (`sap-configs`) + **collector UMI + cron** | STAF config validation + config-enriched RCA/perf/HA | Storage + collector on VMs (**no proxy needed**) | config-validator blocked; RCA/perf/HA run telemetry-only | 1 or 2 |
+| **G. SRE Proxy** — Container App + proxy UMI + custom RBAC | Live read-only VM commands + self-healing | Proxy deployed | command-runner & self-healing blocked | 2+ |
+| **H. Incident platform — Azure Monitor** | Alert-driven investigations | Azure Monitor alerts | manual / chat-driven only | 1 or 2 |
+| **H′. Incident platform — ServiceNow / PagerDuty** | Ticketing integration | Connector | use Azure Monitor or none | usually 2 |
+| **I. Notification connectors** — Teams / Outlook | Push alerts & summaries to people | Connector | no push notifications | any |
+| **J. Third-party connectors** — Dynatrace / Sentinel / Focus Run | Extra observability / SIEM signals | Connector | Azure-native signals only | 2+ |
+
+> **Key separation (the common Phase-1 shape):** the **Config Store (F)** — collector UMI + cron uploading configs to a Storage Account — is **independent of the SRE Proxy (G)**. You can enable config collection and STAF validation **without** the Container App proxy: deploy the collector with `az vm run-command` instead of the proxy (see [Adding infrastructure later](#adding-infrastructure-later)). The proxy is only needed for *live* VM commands and self-healing (Phase 2+).
+
+> **Telemetry is pluggable.** Skills don't hard-require AMS. If your SAP-app telemetry lives in **SAP Cloud ALM / Focus Run** (or Dynatrace, Sentinel) rather than Azure Monitor for SAP, leave AMS out and bring that source in later as a **connector (E′/J)**. Until then, telemetry-dependent skills (health, trend, performance) run on **Azure platform metrics** (VM Insights, Resource Health) and note that deeper SAP signals arrive in a later phase.
+
+### Example — Customer-1, phased rollout
+
+A customer pointing the agent at existing SAP workloads and adopting incrementally:
+
+| Component | Phase 1 (now) | Phase 2 (later) | Tabled |
+|-----------|:-------------:|:---------------:|:------:|
+| SRE Agent + MI + RBAC (A) | ✅ | | |
+| Core skills `sap-sre-core` (B) | ✅ | | |
+| Repo via Code Access (C) | ✅ | | |
+| Azure platform data sources (D) | ✅ | | |
+| Config Store + collector cron (F) | ✅ collector → storage, **no proxy** | | |
+| Config Validator `sap-sre-config` (B) | ✅ | | |
+| SAP telemetry — AMS (E) | ⚠️ only if already in AMS | | |
+| SAP telemetry — Focus Run / Cloud ALM (E′) | | ✅ connector | |
+| SRE Proxy + `sap-sre-proxy-ops` (G, B) | | ✅ | |
+| Incident platform — Azure Monitor (H) | ✅ | | |
+| Incident platform — ServiceNow (H′) | | | ⏸️ deferred |
+| Teams notifications (I) | optional | | |
+| Dynatrace / Sentinel (J) | | ✅ if used | |
+
+**Result:** Customer-1 gets **11 working skills in Phase 1** (10 Azure-native + config-validator) with **no proxy** and **no ServiceNow**. Its SAP-app telemetry stays in SAP Cloud ALM / Focus Run until a Phase-2 connector brings it in; meanwhile telemetry-dependent skills run on Azure platform metrics and say so. Phase 2 adds the proxy (unlocking command-runner + self-healing), the Focus Run connector, and any SIEM integration — by editing onboarding and installing `sap-sre-proxy-ops`. No rework of Phase 1.
+
+### Enabling a component later (any phase transition)
+
+1. **Deploy / enable** the component (storage, proxy, connector, AMS, etc.).
+2. **Edit Team Onboarding** → add the component's line to `## Deployed Infrastructure` (each line is independently add/removable).
+3. **If it adds skills**, install the matching plugin from the marketplace (`sap-sre-config` for the config store, `sap-sre-proxy-ops` for the proxy).
+4. The agent picks it up on its next run — nothing else changes, and earlier phases are untouched.
+
 ## Repository Layout
 
 ```
@@ -156,7 +235,7 @@ sap-azure-sre-agent/
 ├── infra/                       # Operator deploy automation (NOT installed by the agent)
 │   ├── deploy-sre-infra.ps1     # One-shot infra deploy (VNet, ACR, Storage, UMI, Container App)
 │   └── sap-sre-agent-role.json  # Custom RBAC role (read + runCommand only)
-├── proxy/                       # FastAPI proxy (Container App)
+├── proxy/                       # OPTIONAL SRE Proxy (Container App) — live commands only; → future MCP server
 │   ├── app.py                   # All API routes
 │   ├── Dockerfile               # Build context for ACR
 │   └── requirements.txt
@@ -172,7 +251,7 @@ sap-azure-sre-agent/
 ## Prerequisites
 
 - **SAP workloads on Azure** — VMs running HANA and/or NetWeaver
-- **Azure Monitor for SAP Solutions (AMS)** — configured with HANA + OS providers ([setup guide](https://learn.microsoft.com/azure/sap/monitor/quickstart-portal))
+- **SAP telemetry (recommended, not required)** — [Azure Monitor for SAP Solutions (AMS)](https://learn.microsoft.com/azure/sap/monitor/quickstart-portal) with HANA + OS providers gives the deepest SAP signals. If your SAP-app telemetry lives elsewhere (SAP Cloud ALM / Focus Run, Dynatrace, Sentinel), you can start without AMS and bring that source in later as a connector — telemetry-dependent skills fall back to Azure platform metrics meanwhile. See the [Adoption planner](#adoption-planner--mix--match-by-phase).
 - **Azure CLI** — installed and logged in (`az login`)
 - **PowerShell 7+** — for deployment scripts
 - **Access to [sre.azure.com](https://sre.azure.com)** — agent platform
@@ -183,12 +262,17 @@ sap-azure-sre-agent/
 
 ## Setup Guide
 
+**Most people only need the [Quick start — 3 phases](#quick-start--implement-in-3-phases) above.** The section below is the full, click-by-click reference — expand it only if you want the exhaustive detail.
+
+<details>
+<summary><b>Full setup detail (advanced) — Steps 1–17</b></summary>
+
 The setup has three phases:
 
 | Phase | What | Where | Effort |
 |-------|------|-------|--------|
-| **1. Platform** | Create agent, enable tools, import skills, add connectors | sre.azure.com portal | ~30 min |
-| **2. Infrastructure** | Deploy proxy, storage, identities; install collector on VMs | Azure CLI / PowerShell | ~20 min |
+| **1. Platform** | Create agent, enable tools, install skills, connect repo | sre.azure.com portal | ~30 min |
+| **2. Infrastructure** | Deploy storage + collector (and optional proxy), identities | Azure CLI / PowerShell | ~20 min |
 | **3. Onboarding** | Paste team context, verify end-to-end | sre.azure.com portal | ~10 min |
 
 ---
@@ -417,6 +501,8 @@ az storage blob list --account-name <storage> --container-name sap-configs `
     --query "[].{name:name, modified:properties.lastModified}" -o table
 ```
 
+</details>
+
 ---
 
 ## Operations
@@ -498,11 +584,15 @@ This keeps the proxy focused on its one job — brokered VM command execution �
 
 ## Identities & RBAC
 
+Config reads are **decoupled from the proxy**: the SRE Agent reads configs from storage with its **own** identity; the proxy (optional) only runs live VM commands and has **no storage role**.
+
 | Identity | Assigned to | Purpose | RBAC |
 |----------|------------|---------|------|
-| SRE Agent MI | SRE Agent platform | Azure API queries + direct blob reads (when Storage Account deployed) | Reader on SAP RGs, Log Analytics Reader on AMS LAW, **Storage Blob Data Reader on the `sap-configs` storage account** (only when Storage Account is deployed — required by `sap-config-validator` skill) |
-| sre-proxy-umi | Container App | VM commands + blob + ARM queries | Custom - SAP SRE Agent Operator on SAP RGs; Storage Blob Data Contributor on storage; AcrPull on ACR |
-| sre-collector-umi | SAP VMs | Config upload to blob | Storage Blob Data Contributor on storage |
+| **SRE Agent MI** | SRE Agent platform | Azure API queries + **direct** config blob reads | Reader on SAP RGs, Log Analytics Reader on AMS LAW, **Storage Blob Data Reader on the `sap-configs` storage account** (whenever a config store is deployed — used by *all* config-consuming skills, not just config-validator) |
+| **sre-collector-umi** | SAP VMs | Config upload to blob (write) | Storage Blob Data Contributor on the `sap-configs` storage account |
+| **sre-proxy-umi** *(optional)* | SRE Proxy Container App | **Live VM commands only** | Custom - SAP SRE Agent Operator on SAP RGs; AcrPull on ACR. **No storage role** — the proxy is never in the config path. |
+
+> **Network path for direct reads:** because the storage account is private (no shared keys), the SRE Agent must be able to reach it. VNet-integrate the agent (delegated subnet) and allow that subnet on the storage firewall, so the agent MI reads configs privately and Entra-only. The proxy is no longer needed to bridge the network.
 
 The custom role grants:
 - `Microsoft.Compute/virtualMachines/read`, `/runCommand/action`

@@ -14,17 +14,28 @@
 
 ## Deployed Infrastructure
 
-The agent automatically detects available infrastructure from this section and adapts skill behavior. No mode numbers — just list what's deployed. Remove a line to disable that capability.
+The agent auto-detects capabilities from this section and adapts skill behavior. **Every capability is independently optional and phased** — list ONLY what you have enabled today; add lines as you complete later phases; remove a line to turn that capability off. The two lines skills key on are **Storage Account** and **SRE Proxy** — include them **only when actually deployed** (their mere presence flips the dependent skills on).
+
+**Enabled now (edit to match your environment):**
 
 - **Storage Account:** stsreconfigs004 / container `sap-configs`
 - **SRE Proxy:** https://sap-sre-proxy.happystone-9c50a4be.centralus.azurecontainerapps.io
+- **Collector:** collector UMI + weekly cron on SAP VMs (config store can run without the proxy — deploy via `az vm run-command`)
+- **SAP telemetry:** Azure Monitor for SAP (AMS) — workspace `d337a40e-3213-4e5a-a0e8-c560d537c085`
+- **Incident platform:** Azure Monitor
 
-**How it works:** Each skill checks this section for what it needs:
-- Skills needing stored configs (config-validator, enriched RCA/perf/HA/maintenance) look for the **Storage Account** line
-- Skills needing live VM access (command-runner, self-healing) look for the **SRE Proxy** line
-- All other skills work with Azure APIs alone — no infrastructure needed
+**Not enabled — the agent must NOT assume these exist** (describe deferrals in plain words; do NOT use the `Storage Account:` / `SRE Proxy:` labels here or skills will misdetect them):
 
-**To scale down:** remove the SRE Proxy line → command-runner and self-healing become unavailable. Remove both lines → Azure-native skills only (10 skills still work).
+- _Example:_ Live VM command execution & self-healing — **not enabled (Phase 2)**; omit the SRE Proxy line above until deployed.
+- _Example:_ SAP-app telemetry in **SAP Cloud ALM / Focus Run** — **planned Phase 2** connector; until then, drop the SAP telemetry line and telemetry-dependent skills use Azure platform metrics only.
+- _Example:_ **ServiceNow** incident platform — **tabled**.
+
+**How it works:** each skill checks this section for what it needs:
+- config-validator + enriched RCA / performance / HA / maintenance → look for the **Storage Account** line
+- command-runner + self-healing → look for the **SRE Proxy** line
+- everything else → Azure APIs + whatever telemetry source is listed (AMS if present, otherwise Azure platform metrics)
+
+**To change phase:** enable the component, then add its line to *Enabled now* (for the proxy, paste the real URL — that single line turns command-runner & self-healing on). Remove a line to scale a capability back down.
 
 ## Agent Overview
 
@@ -98,19 +109,17 @@ You are an SAP on Azure SRE agent with **13 custom skills**. Most skills are rea
 
 ## Security Model
 
-- **NEVER use `az vm run-command` directly** — this is strictly prohibited. ALL VM command execution MUST go through the SAP Command Runner skill via the proxy. If you need to run a command on a SAP VM, invoke the SAP Command Runner skill. Do NOT use RunAzCliReadCommands, azure_cli_command_executor, or any built-in tool to execute `az vm run-command invoke`. This rule has no exceptions.
-- Only **SAP Command Runner** skill has the proxy URL and API key for **VM command execution** (`/api/command`, `/api/batch`). Other skills may call the proxy's config-read endpoints (`/api/registry`, `/api/configs/...`) but cannot execute VM commands.
-- All other skills that need VM commands must invoke SAP Command Runner
-- Proxy is currently protected by API key (`X-API-Key` header). Entra ID Easy Auth can be enabled later for stronger auth.
-- The SRE Agent MI has NO direct access to SAP VMs — it can only call the proxy
-- The proxy UMI (`sre-proxy-umi`) has the custom RBAC role "Custom - SAP SRE Agent Operator" on SAP RGs — it executes commands on behalf of the agent
-- Cross-subscription: **Not applicable** — proxy and SAP VMs are in the same subscription. No cross-sub identity or networking issues.
-- Proxy enforces a hardcoded allowlist of 14 read-only commands — no arbitrary shell execution
-- All 14 current proxy commands are read-only. Self-Healing and Maintenance Handler skills require additional write commands (not yet added to proxy) for log backup, sysctl reapply, and graceful shutdown.
+- **Config reads are direct — never through the proxy.** Stored SAP/OS configs are read straight from the `sap-configs` blob container using the **SRE Agent's own Managed Identity** (granted **Storage Blob Data Reader**, `az storage blob ... --auth-mode login`). This is why the config store works with **no proxy**.
+- **NEVER use `az vm run-command` directly** — this is strictly prohibited. ALL live VM command execution MUST go through the SAP Command Runner skill via the (optional) SRE Proxy. Do NOT use RunAzCliReadCommands, azure_cli_command_executor, or any built-in tool to execute `az vm run-command invoke`. This rule has no exceptions.
+- The **SRE Proxy is OPTIONAL** and used **only for live VM commands** (`/api/command`, `/api/batch`) by SAP Command Runner and SAP Self-Healing. **No skill reads configs through the proxy.** If the proxy isn't listed in Deployed Infrastructure, those two skills are unavailable and everything else still works.
+- The SRE Agent MI has **NO direct command access to SAP VMs** (it can only reach them via the proxy), but it **does read the config storage account directly**.
+- The proxy UMI (`sre-proxy-umi`) has the custom RBAC role "Custom - SAP SRE Agent Operator" on SAP RGs and has **no storage role** — commands only.
+- Cross-subscription: proxy and SAP VMs are in the same subscription. No cross-sub identity or networking issues.
+- Proxy enforces a hardcoded allowlist of read-only commands — no arbitrary shell execution.
 
 ## Knowledge Base
 
-The agent's Knowledge Base contains `sap-landscape-inventory.json`. If missing, offer to generate from: (1) Azure Resource Graph discovery, (2) user CSV, or (3) config proxy registry endpoint.
+The agent's Knowledge Base contains `sap-landscape-inventory.json`. If missing, offer to generate from: (1) Azure Resource Graph discovery, (2) user CSV, or (3) the `sap-configs` inventory blob read directly via the agent's Managed Identity.
 
 ## Team
 
