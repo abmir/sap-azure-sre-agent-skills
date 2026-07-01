@@ -45,7 +45,7 @@ Each phase is independent — stop after any phase. Deeper detail lives in [docs
 
 1. **Create the agent & enable capabilities.** At [sre.azure.com](https://sre.azure.com) create an SRE Agent and note its **Managed Identity** object ID (Identity blade).
    - **Built-in Tools** (Capabilities → Tools): leave at the **defaults**. The SAP skills rely on these tools, and access is enforced by the agent's **Managed Identity + read-only RBAC** (step 2), not the toggles.
-   - **Built-in Skills** (Capabilities → Skills — *separate* from tools): keep the defaults, and enable these four so SAP monitoring and alert-driven investigation work out of the box — **`log_analytics_query`**, **`app_insights_query`**, **`azure_alerting_incident_handler`**, **`azure_alerting_scheduled_task`**. (Your 13 SAP skills are **custom** and install in step 5.)
+   - **Built-in Skills** (Capabilities → Skills): keep the defaults, and enable these four — **`log_analytics_query`**, **`app_insights_query`**, **`azure_alerting_incident_handler`**, **`azure_alerting_scheduled_task`**.
    - Further reading: [Manage global tools](https://learn.microsoft.com/azure/sre-agent/manage-global-tools) · [Tools & skills page](https://learn.microsoft.com/azure/sre-agent/global-tools-page) · [Tools overview](https://learn.microsoft.com/azure/sre-agent/tools).
 2. **Grant read access (RBAC).** The agent reads all Azure platform data through its **Managed Identity** — it only needs **read** roles. **Reader** is the umbrella (`*/read` across services); a few data planes need their own read role on top:
 
