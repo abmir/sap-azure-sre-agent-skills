@@ -28,17 +28,30 @@ The agent consumes this repo through two GitHub connections (plus one manual pas
 
 Install only the plugins your tier supports. A security-strict customer installs just `sap-sre-core` and never sees the proxy skills.
 
+## Before you start
+
+Have these ready before Phase 0 (the setup below assumes them):
+
+- **Fork this repo** to your org — both **Code Access** and **Plugin Marketplace** point at *your* fork, not this one.
+- **Tooling:** Azure CLI (run `az login`) and **PowerShell 7+** on your machine (needed for the Phase 1/2 deploy scripts).
+- **Permissions:** **Owner or Contributor _plus_ User Access Administrator** on the subscription — you create role assignments in every phase.
+- **Details to collect:** SAP **subscription ID**, the SAP **resource group(s)** and VM names, and — if you use **Azure Monitor for SAP (AMS)** — the AMS Log Analytics **workspace ID** and its resource group (usually `mrg-sapmon-…`).
+
 ## Setup — 3 phases
 
 Each phase is independent — stop after any phase. Deeper detail lives in [docs/setup-detailed.md](docs/setup-detailed.md); pick components with the [Adoption planner](docs/adoption-planner.md).
 
 ### Phase 0 — Azure-native · ~30 min · no infrastructure · 10 skills
 
-1. **Create the agent.** At [sre.azure.com](https://sre.azure.com) create an SRE Agent and note its **Managed Identity** object ID (Identity blade).
+1. **Create the agent.** At [sre.azure.com](https://sre.azure.com) create an SRE Agent, enable its built-in **Tools** and **Skills** (Capabilities), and note its **Managed Identity** object ID (Identity blade).
 2. **Grant read access** on each SAP resource group (add **Cost Management Reader** at subscription scope for cost skills):
    ```bash
    az role assignment create --assignee-object-id <agent-mi> --assignee-principal-type ServicePrincipal --role Reader             --scope /subscriptions/<sub>/resourceGroups/<SAP-RG>
    az role assignment create --assignee-object-id <agent-mi> --assignee-principal-type ServicePrincipal --role "Monitoring Reader" --scope /subscriptions/<sub>/resourceGroups/<SAP-RG>
+   ```
+   **If you use AMS**, also grant the agent access to the AMS Log Analytics workspace — it lives in a *different* resource group (e.g. `mrg-sapmon-…`), and without this the HANA/OS/cluster health layers come back empty:
+   ```bash
+   az role assignment create --assignee-object-id <agent-mi> --assignee-principal-type ServicePrincipal --role "Log Analytics Reader" --scope /subscriptions/<sub>/resourceGroups/<AMS-RG>
    ```
 3. **Connect the repo.** Builder → **Code Access** → connect your fork (skills' source + knowledge base).
 4. **Install skills.** Builder → **Plugins** → install **`sap-sre-core`**.
@@ -51,7 +64,7 @@ Each phase is independent — stop after any phase. Deeper detail lives in [docs
    ```powershell
    ./infra/deploy-sre-infra.ps1 -SubscriptionId <sub> -StorageAccountName <name> -SreAgentUmiPrincipalId <agent-mi>
    ```
-2. **Reach private storage.** VNet-integrate the agent and allow its subnet on the storage firewall (pass your SAP subnets via `-SapSubnetIds`).
+2. **Reach private storage.** VNet-integrate the agent (portal: the agent resource → **Networking** → VNet integration) and allow its delegated subnet on the storage firewall. Pass your SAP VM subnets via `-SapSubnetIds` on the deploy script so the collector can upload. *(Required — the storage account is private with no public access, so the agent must reach it over the VNet.)*
 3. **Collect configs.** Assign the collector UMI to each SAP VM, then run the collector:
    ```bash
    az vm identity assign -g <SAP-RG> -n <VM> --identities <collector-umi-resource-id>
