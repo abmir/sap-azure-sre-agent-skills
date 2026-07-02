@@ -47,7 +47,7 @@ This section covers what **deployed infrastructure** (Storage Account / MCP comm
 
 ## Scope
 
-**HA systems only**: HSO (scaleout-ha). Skip AB1/AB3 (no HA).
+**Cluster-bearing systems only** — apply to any system whose `deployment` in the landscape inventory is **`high-availability`** or **`disaster-recovery`** (these have Pacemaker + HSR). **Skip** systems whose `deployment` is `standalone` or `distributed` (no cluster). Works for both `scale-up` and `scale-out` architectures; for `scale-out`, also check standby-node readiness and that every worker node is present in the cluster. If asked about a non-cluster system, reply that cluster health doesn't apply to a `<type>` system rather than erroring.
 
 ## Data Sources
 

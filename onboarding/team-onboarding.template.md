@@ -29,11 +29,17 @@
 - **Full system inventory:** see the `sap-landscape-inventory.json` knowledge file (summary table below).
 
 ## SAP systems
-| SID | Type | Resource Group | VMs (roles) |
-|-----|------|----------------|-------------|
-| AB1 | single-server (all-in-one) | RG_SAP_CUS_AB1 | AB1vm (10.40.3.4) — DB + ASCS + PAS |
+List each system with its **topology type** (architecture + deployment). Full per-VM detail (roles, HSR sites, DR region, scale-out worker/standby nodes) lives in the `sap-landscape-inventory.json` knowledge file — the table below is just the routing summary.
 
-_AB1 is a single-server system (no Pacemaker/HSR), so HA Cluster Health, Self-Healing, and Maintenance Handler have limited applicability. AB1vm must be started manually (no auto-shutdown)._
+| SID | Topology type | Criticality | Resource Group | Primary region | DR region |
+|-----|---------------|-------------|----------------|----------------|-----------|
+| AB1 | scaleup-standalone | dev | RG_SAP_CUS_AB1 | centralus | — |
+
+**Topology type** = `architecture-deployment`, one of:
+`scaleup-standalone` · `scaleup-distributed` · `scaleup-ha` · `scaleup-dr` · `scaleout-standalone` · `scaleout-distributed` · `scaleout-ha` · `scaleout-dr`.
+See the `_field_reference` block in `sap-landscape-inventory.json` for definitions and a worked example of each.
+
+_AB1 is scale-up standalone (one VM: DB + ASCS + PAS; no Pacemaker/HSR/DR), so HA Cluster Health, Self-Healing (cluster actions), and the Pacemaker layers of other skills don't apply — the agent detects this from the topology and skips them (see "Topology model" in Part 2). AB1vm must be started manually (no auto-shutdown)._
 
 ## Deployed capabilities — keep ONLY the lines that are true today; delete the others
 - **SAP telemetry:** Azure Monitor for SAP (AMS) <!-- or "SAP Cloud ALM / Focus Run / Dynatrace (APM connector)"; delete this line if you have no SAP telemetry source -->
@@ -61,6 +67,27 @@ Each skill checks the **Deployed capabilities** in Part 1 and adapts automatical
 - health / performance / trend / incident (HANA & SAP-app depth) → the **SAP telemetry** line: use **AMS** if listed; else an **SAP APM connector** (SAP Cloud ALM / Focus Run / Dynatrace) if listed; else fall back to **Azure platform metrics only** (VM Insights, Azure Monitor) and disclose the reduced fidelity in the report header
 - incident-analysis + self-healing (incident records) → the **Incident platform** line: create/update incidents in **ServiceNow** (or the listed platform) if present; otherwise notify via **Teams/Outlook** only
 - everything else → Azure APIs, always available via the agent's RBAC
+
+## Topology model (how the agent adapts per system)
+
+Every system in `sap-landscape-inventory.json` declares **`architecture`** (`scale-up` | `scale-out`) and **`deployment`** (`standalone` | `distributed` | `high-availability` | `disaster-recovery`). The agent reads these two fields and adapts scope automatically — **never assume AB1's single-VM shape.** Determine per system:
+
+- **`architecture: scale-out`** → the DB spans a **master + worker (+ standby)** nodes (`scale_out.db_worker_nodes` / `standby_nodes`; each DB VM has `node_role`). Health/performance/trend queries must cover **all** DB nodes and check partition/worker balance and standby readiness — not a single DB host. `scale-up` = exactly one active DB node per replica.
+- **`deployment: standalone`** → all tiers may be on one VM (scale-up) or one DB set + one app VM (scale-out). **No** Pacemaker, **no** HSR. Skip HA Cluster Health, Self-Healing (cluster actions), and the Pacemaker layer of Operational Health / Incident Analysis.
+- **`deployment: distributed`** → DB / ASCS / App on separate VMs but still **no cluster**. Same HA/cluster skills are skipped; per-tier health still applies.
+- **`deployment: high-availability`** → Pacemaker + HSR are present (`ha.cluster_manager`, `ha.fencing`, `ha.db_replication`, `ha.sites`; VMs carry `ha_role: primary|secondary`). **All** HA Cluster Health, HSR, fencing, and takeover-readiness checks apply.
+- **`deployment: disaster-recovery`** → everything HA does, **plus** a cross-region async replica (`dr.region`, `dr.db_replication: async`; VMs with `ha_role: dr`). Also evaluate DR replication lag, DR-region resource readiness, and RPO/RTO posture (Resiliency Assessment).
+
+**Applicability matrix (use `deployment` to gate cluster skills):**
+
+| deployment | HA Cluster Health / cluster Self-Healing | DR replication checks | All other skills |
+|------------|:---:|:---:|:---:|
+| standalone | skip | skip | yes |
+| distributed | skip | skip | yes |
+| high-availability | yes | skip | yes |
+| disaster-recovery | yes | yes | yes |
+
+When a cluster/DR skill is asked for a system whose `deployment` doesn't support it, respond that the check doesn't apply to a `<type>` system (and why) instead of erroring.
 
 ## Skill Routing
 

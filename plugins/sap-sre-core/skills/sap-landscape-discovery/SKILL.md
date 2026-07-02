@@ -101,9 +101,22 @@ def check_power_state(vm_name, rg):
     return "unknown"
 ```
 
+## Topology inference (populate `architecture` + `deployment`)
+
+When building or refreshing the inventory, classify each system into the canonical topology so downstream skills adapt (see the `_field_reference` in `sap-landscape-inventory.json`). Infer from discovered resources:
+
+- **architecture** — count active HANA DB nodes for the SID: **one** DB node per replica → `scale-up`; a **master + worker** set (multiple DB VMs sharing one HANA SID/instance, HANA `scale_out` role tags, or >1 DB VM in the same HSR site) → `scale-out` (record `scale_out.db_worker_nodes` / `standby_nodes`).
+- **deployment** — decide in this order:
+  1. A DB replica (or app tier) in a **second Azure region** with async HSR / ASR → **`disaster-recovery`**.
+  2. Else a **Pacemaker cluster** present (2+ DB VMs with HSR, ASCS+ERS pair, internal Standard LB, SBD/fence-agent) → **`high-availability`** (set `ha.*`, mark VMs `ha_role: primary|secondary`).
+  3. Else DB / ASCS / App on **separate VMs**, no cluster → **`distributed`**.
+  4. Else all tiers on **one VM** → **`standalone`**.
+- Set `type` = `"<architecture>-<deployment>"` (e.g. `scaleout-ha`). Populate each VM's `roles`, `ha_role`, and (scale-out) `node_role`.
+- If you cannot confidently classify (e.g. missing tags), record your best guess and flag it in the report so the user can correct it in the inventory file.
+
 ## Output Format
 
 Display inventory as a structured table:
-| SID | Type | RG | VMs | Roles | VM Size | Zones | HA |
+| SID | Topology (arch-deployment) | RG | Region(s) | VMs | Roles | VM Size | Zones | DB nodes (master/worker/standby) |
 
 For power state: append a column with GREEN (running), RED (stopped/deallocated).

@@ -103,7 +103,7 @@ Prometheus_OSExporter_CL
 | summarize avg(node_cpu_seconds_total_d), avg(node_memory_MemAvailable_bytes_d), max(node_filesystem_avail_bytes_d) by bin(TimeGenerated, 5m), Computer
 ```
 
-### Step 3: Layer 3 — Pacemaker Cluster (HA systems only)
+### Step 3: Layer 3 — Pacemaker Cluster (only when `deployment` is high-availability or disaster-recovery; skip for standalone/distributed)
 ```
 Prometheus_HaClusterExporter_CL
 | where TimeGenerated > ago(6h)

@@ -31,6 +31,15 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 
 **Routing**: For live Pacemaker/HSR state ("Is HSR in sync?", "Cluster status", "Takeover readiness?") → route to SAP HA Cluster Health. This skill checks *compliance* (Advisor recommendations, configuration best practices), not live cluster state.
 
+## Topology-aware scoring
+
+Read each system's `architecture` + `deployment` from the inventory and set expectations by topology — don't penalize a system for lacking redundancy it was never designed to have; instead state the resilience ceiling of its tier:
+
+- **standalone / distributed** — single points of failure are expected. Report SPOFs and recommend the upgrade path to HA (Pacemaker + HSR + ASCS/ERS), but score against the standalone/distributed baseline, not the HA rubric.
+- **high-availability** — apply the full in-region rubric: zone spread of DB primary/secondary + ASCS/ERS, Standard ILB with HA ports, SBD/fence-agent, HSR sync/syncmem, matching zone-redundant storage.
+- **disaster-recovery** — everything HA, **plus** cross-region checks: `dr.region` resources provisioned and sized, HSR `async` replica present and replicating, ASR/backup for the ASCS/app tier, and an RPO/RTO statement.
+- **scale-out** — additionally verify every DB worker node is zone/PPG-aligned and a **standby node** exists for HA/DR (`scale_out.standby_nodes >= 1`); flag a scale-out HA/DR system with no standby as a gap.
+
 ## How It Works
 
 The skill combines three data sources:

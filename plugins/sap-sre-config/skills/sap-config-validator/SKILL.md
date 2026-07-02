@@ -95,8 +95,12 @@ OS_TYPE      = "SLES_SAP"         # SLES_SAP | REDHAT | OracleLinux | Windows
 ROLES        = ["DB", "SCS", "PAS"]    # DB,SCS,ERS,APP,WEB,PAS  (ASCS auto-aliased to SCS)
 DB_TYPE      = "HANA"             # HANA | Db2 | MSSQL | Oracle | ASE
 STORAGE_TYPE = "Premium_LRS"      # Premium_LRS | UltraSSD_LRS | PremiumV2_LRS | AFS | ANF | StandardSSD_LRS | Standard_LRS
-HA_TYPE      = "false"            # "false" (no HA) | "scale_up" | "scale_out"
-HA_AGENT     = "none"             # none | AFA | ISCSI
+# HA_TYPE is the STAF applicability value — DERIVE it from the inventory's architecture + deployment:
+#   deployment in (standalone, distributed)          -> "false"
+#   deployment in (high-availability, disaster-recovery) and architecture == scale-up  -> "scale_up"
+#   deployment in (high-availability, disaster-recovery) and architecture == scale-out -> "scale_out"
+HA_TYPE      = "false"            # "false" (no HA) | "scale_up" | "scale_out"  (derived — see above)
+HA_AGENT     = "none"             # none | AFA | ISCSI   (from ha.fencing: azure-fence-agent->AFA, sbd->ISCSI)
 
 CONFIG_DIR = Path(f"/tmp/configs/{SID}/{HOST}/latest")  # populated by Step 1b
 

@@ -2,55 +2,258 @@
   "environment": "<environment-name>",
   "subscription_id": "<subscription-id>",
   "storage_account": "<config-storage-account-name>",
-  "description": "SAP landscape inventory — source of truth for all SRE Agent skills. Upload this file to the SRE Agent Knowledge Sources after filling in your systems.",
+  "description": "SAP landscape inventory — source of truth for all SRE Agent skills. Upload this file to the SRE Agent Knowledge Sources after filling in your systems. Delete every _comment / example system and add your own.",
+
   "how_to_generate": [
     "Option 1: Fill this template manually based on your SAP landscape",
     "Option 2: Ask the SRE Agent: 'Build SAP landscape inventory from Azure Resource Graph'",
     "Option 3: Ask the SRE Agent: 'Import SAP landscape from CSV' and paste your data",
-    "Option 4: The config proxy registry endpoint returns this data automatically if the collector cron job is configured"
+    "Option 4: The config collector registry endpoint returns this data automatically if the collector cron job is configured"
   ],
+
+  "_field_reference": {
+    "_note": "Every system MUST set architecture + deployment. Together they form the canonical topology. The eight examples below show one of each. Copy the one that matches, rename, and fill in your VMs.",
+    "architecture": {
+      "scale-up": "HANA DB runs on a SINGLE node (one DB VM per replica). Vertical scaling.",
+      "scale-out": "HANA DB is PARTITIONED across a master + N worker nodes (optionally + standby). Horizontal scaling for very large DBs (BW/4HANA, large S/4)."
+    },
+    "deployment": {
+      "standalone": "All SAP tiers on ONE VM (DB + ASCS + PAS). No redundancy. Dev/sandbox. (scale-out standalone = one master+workers, single app, no HA).",
+      "distributed": "DB, ASCS, and one or more App servers on SEPARATE VMs. Still no cluster / no failover.",
+      "high-availability": "In-region redundancy: Pacemaker cluster + HANA System Replication (HSR, sync/syncmem) + ASCS/ERS clustered. Survives a node or zone failure.",
+      "disaster-recovery": "HA in the primary region PLUS an async replica (HSR async) in a second Azure region. Survives a region failure."
+    },
+    "type_enum": [
+      "scaleup-standalone", "scaleup-distributed", "scaleup-ha", "scaleup-dr",
+      "scaleout-standalone", "scaleout-distributed", "scaleout-ha", "scaleout-dr"
+    ],
+    "vm_fields": {
+      "roles": "Any of: db | ascs | ers | pas | app | aas | webdisp. A standalone VM lists all of [db, ascs, pas].",
+      "ha_role": "primary | secondary | dr | none. For DB: HSR primary/secondary and the DR async target = 'dr'. For ASCS/ERS: the ASCS-holding node = primary.",
+      "node_role": "SCALE-OUT ONLY. master | worker | standby. Omit for scale-up.",
+      "site": "HSR site label (e.g. site-a / site-b) and 'dr' for the DR region set. Omit for standalone/distributed.",
+      "region": "Azure region of this VM. Required for DR systems (primary vs DR region differ)."
+    },
+    "skill_applicability": "HA Cluster Health, Self-Healing (cluster actions) and the Pacemaker layer of Operational Health / Incident Analysis apply ONLY when deployment is 'high-availability' or 'disaster-recovery'. Resiliency Assessment scores DR posture using architecture + deployment + regions. All other skills apply to every topology."
+  },
+
   "systems": [
     {
-      "_comment": "Example — delete this entry and add your own systems",
-      "sid": "ECP",
-      "db_sid": "ECP",
-      "type": "distributed-ha",
-      "criticality": "production",
-      "resource_group": "RG_SAP_ECP",
-      "managed_rg": "mrg-ECP-xxxxx",
+      "_comment": "1/8 — SCALE-UP STANDALONE (all-in-one, dev/sandbox). Like AB1.",
+      "sid": "DEV",
+      "db_sid": "DEV",
+      "architecture": "scale-up",
+      "deployment": "standalone",
+      "type": "scaleup-standalone",
+      "criticality": "dev",
+      "resource_group": "RG_SAP_DEV",
+      "managed_rg": "mrg-DEV-xxxxx",
+      "region": "eastus2",
+      "ha": { "enabled": false },
+      "dr": { "enabled": false },
       "vms": [
-        {
-          "name": "ecpdb01",
-          "roles": ["db"],
-          "hana_instance": "00",
-          "ha_role": "primary"
-        },
-        {
-          "name": "ecpdb02",
-          "roles": ["db"],
-          "hana_instance": "00",
-          "ha_role": "secondary"
-        },
-        {
-          "name": "ecpascs01",
-          "roles": ["ascs"],
-          "ascs_instance": "01"
-        },
-        {
-          "name": "ecpers01",
-          "roles": ["ers"],
-          "ers_instance": "10"
-        },
-        {
-          "name": "ecpapp01",
-          "roles": ["app"],
-          "app_instance": "00"
-        },
-        {
-          "name": "ecpapp02",
-          "roles": ["app"],
-          "app_instance": "01"
-        }
+        { "name": "devvm", "roles": ["db", "ascs", "pas"], "ha_role": "none", "hana_instance": "00", "ascs_instance": "01", "app_instance": "00" }
+      ]
+    },
+    {
+      "_comment": "2/8 — SCALE-UP DISTRIBUTED (separate DB/ASCS/App tiers, NO cluster).",
+      "sid": "QAS",
+      "db_sid": "QAS",
+      "architecture": "scale-up",
+      "deployment": "distributed",
+      "type": "scaleup-distributed",
+      "criticality": "non-production",
+      "resource_group": "RG_SAP_QAS",
+      "managed_rg": "mrg-QAS-xxxxx",
+      "region": "eastus2",
+      "ha": { "enabled": false },
+      "dr": { "enabled": false },
+      "vms": [
+        { "name": "qasdb01",   "roles": ["db"],   "ha_role": "none", "hana_instance": "00" },
+        { "name": "qasascs01", "roles": ["ascs"], "ha_role": "none", "ascs_instance": "01" },
+        { "name": "qasapp01",  "roles": ["app"],  "ha_role": "none", "app_instance": "00" },
+        { "name": "qasapp02",  "roles": ["app"],  "ha_role": "none", "app_instance": "01" }
+      ]
+    },
+    {
+      "_comment": "3/8 — SCALE-UP HA (Pacemaker + HSR sync + ASCS/ERS clustered). In-region only.",
+      "sid": "PRD",
+      "db_sid": "PRD",
+      "architecture": "scale-up",
+      "deployment": "high-availability",
+      "type": "scaleup-ha",
+      "criticality": "production",
+      "resource_group": "RG_SAP_PRD",
+      "managed_rg": "mrg-PRD-xxxxx",
+      "region": "westeurope",
+      "ha": {
+        "enabled": true,
+        "cluster_manager": "pacemaker",
+        "fencing": "azure-fence-agent",
+        "db_replication": "sync",
+        "sites": ["site-a", "site-b"],
+        "load_balancer": "internal-standard-lb"
+      },
+      "dr": { "enabled": false },
+      "vms": [
+        { "name": "prddb01",   "roles": ["db"],   "ha_role": "primary",   "site": "site-a", "hana_instance": "00" },
+        { "name": "prddb02",   "roles": ["db"],   "ha_role": "secondary", "site": "site-b", "hana_instance": "00" },
+        { "name": "prdascs01", "roles": ["ascs"], "ha_role": "primary",   "site": "site-a", "ascs_instance": "00" },
+        { "name": "prders01",  "roles": ["ers"],  "ha_role": "secondary", "site": "site-b", "ers_instance": "10" },
+        { "name": "prdapp01",  "roles": ["app"],  "ha_role": "none",      "app_instance": "01" },
+        { "name": "prdapp02",  "roles": ["app"],  "ha_role": "none",      "app_instance": "02" }
+      ]
+    },
+    {
+      "_comment": "4/8 — SCALE-UP DR (HA in primary region + async HSR replica in a 2nd region).",
+      "sid": "ERP",
+      "db_sid": "ERP",
+      "architecture": "scale-up",
+      "deployment": "disaster-recovery",
+      "type": "scaleup-dr",
+      "criticality": "mission-critical",
+      "resource_group": "RG_SAP_ERP",
+      "managed_rg": "mrg-ERP-xxxxx",
+      "region": "westeurope",
+      "ha": {
+        "enabled": true,
+        "cluster_manager": "pacemaker",
+        "fencing": "sbd",
+        "db_replication": "syncmem",
+        "sites": ["site-a", "site-b"]
+      },
+      "dr": {
+        "enabled": true,
+        "region": "northeurope",
+        "db_replication": "async",
+        "scs_replication": "asr"
+      },
+      "vms": [
+        { "name": "erpdb01",   "roles": ["db"],   "ha_role": "primary",   "site": "site-a", "region": "westeurope",  "hana_instance": "00" },
+        { "name": "erpdb02",   "roles": ["db"],   "ha_role": "secondary", "site": "site-b", "region": "westeurope",  "hana_instance": "00" },
+        { "name": "erpdbdr01", "roles": ["db"],   "ha_role": "dr",        "site": "dr",     "region": "northeurope", "hana_instance": "00" },
+        { "name": "erpascs01", "roles": ["ascs"], "ha_role": "primary",   "site": "site-a", "region": "westeurope",  "ascs_instance": "00" },
+        { "name": "erpers01",  "roles": ["ers"],  "ha_role": "secondary", "site": "site-b", "region": "westeurope",  "ers_instance": "10" },
+        { "name": "erpapp01",  "roles": ["app"],  "ha_role": "none",      "region": "westeurope",  "app_instance": "01" },
+        { "name": "erpappdr01","roles": ["app"],  "ha_role": "dr",        "region": "northeurope", "app_instance": "01" }
+      ]
+    },
+    {
+      "_comment": "5/8 — SCALE-OUT STANDALONE (1 master + N workers, single app, NO HA). Large BW/4HANA.",
+      "sid": "BWP",
+      "db_sid": "BWP",
+      "architecture": "scale-out",
+      "deployment": "standalone",
+      "type": "scaleout-standalone",
+      "criticality": "production",
+      "resource_group": "RG_SAP_BWP",
+      "managed_rg": "mrg-BWP-xxxxx",
+      "region": "eastus",
+      "scale_out": { "db_worker_nodes": 3, "standby_nodes": 0 },
+      "ha": { "enabled": false },
+      "dr": { "enabled": false },
+      "vms": [
+        { "name": "bwpdb01", "roles": ["db"],           "node_role": "master", "ha_role": "none", "hana_instance": "00" },
+        { "name": "bwpdb02", "roles": ["db"],           "node_role": "worker", "ha_role": "none", "hana_instance": "00" },
+        { "name": "bwpdb03", "roles": ["db"],           "node_role": "worker", "ha_role": "none", "hana_instance": "00" },
+        { "name": "bwpdb04", "roles": ["db"],           "node_role": "worker", "ha_role": "none", "hana_instance": "00" },
+        { "name": "bwpci01", "roles": ["ascs", "app"],  "ha_role": "none", "ascs_instance": "01", "app_instance": "00" }
+      ]
+    },
+    {
+      "_comment": "6/8 — SCALE-OUT DISTRIBUTED (scale-out DB + separate ASCS/App tiers, NO cluster).",
+      "sid": "BWD",
+      "db_sid": "BWD",
+      "architecture": "scale-out",
+      "deployment": "distributed",
+      "type": "scaleout-distributed",
+      "criticality": "non-production",
+      "resource_group": "RG_SAP_BWD",
+      "managed_rg": "mrg-BWD-xxxxx",
+      "region": "eastus",
+      "scale_out": { "db_worker_nodes": 2, "standby_nodes": 0 },
+      "ha": { "enabled": false },
+      "dr": { "enabled": false },
+      "vms": [
+        { "name": "bwddb01",   "roles": ["db"],   "node_role": "master", "ha_role": "none", "hana_instance": "00" },
+        { "name": "bwddb02",   "roles": ["db"],   "node_role": "worker", "ha_role": "none", "hana_instance": "00" },
+        { "name": "bwddb03",   "roles": ["db"],   "node_role": "worker", "ha_role": "none", "hana_instance": "00" },
+        { "name": "bwdascs01", "roles": ["ascs"], "ha_role": "none", "ascs_instance": "01" },
+        { "name": "bwdapp01",  "roles": ["app"],  "ha_role": "none", "app_instance": "00" }
+      ]
+    },
+    {
+      "_comment": "7/8 — SCALE-OUT HA (scale-out HANA + standby node + HSR to a 2nd scale-out site, ASCS/ERS clustered).",
+      "sid": "S4P",
+      "db_sid": "S4P",
+      "architecture": "scale-out",
+      "deployment": "high-availability",
+      "type": "scaleout-ha",
+      "criticality": "mission-critical",
+      "resource_group": "RG_SAP_S4P",
+      "managed_rg": "mrg-S4P-xxxxx",
+      "region": "centralus",
+      "scale_out": { "db_worker_nodes": 3, "standby_nodes": 1 },
+      "ha": {
+        "enabled": true,
+        "cluster_manager": "pacemaker",
+        "fencing": "sbd",
+        "db_replication": "sync",
+        "sites": ["site-a", "site-b"],
+        "load_balancer": "internal-standard-lb"
+      },
+      "dr": { "enabled": false },
+      "vms": [
+        { "name": "s4pdb01", "roles": ["db"],   "node_role": "master",  "ha_role": "primary",   "site": "site-a", "hana_instance": "00" },
+        { "name": "s4pdb02", "roles": ["db"],   "node_role": "worker",  "ha_role": "primary",   "site": "site-a", "hana_instance": "00" },
+        { "name": "s4pdb03", "roles": ["db"],   "node_role": "worker",  "ha_role": "primary",   "site": "site-a", "hana_instance": "00" },
+        { "name": "s4pdb04", "roles": ["db"],   "node_role": "standby", "ha_role": "primary",   "site": "site-a", "hana_instance": "00" },
+        { "name": "s4pdb05", "roles": ["db"],   "node_role": "master",  "ha_role": "secondary", "site": "site-b", "hana_instance": "00" },
+        { "name": "s4pdb06", "roles": ["db"],   "node_role": "worker",  "ha_role": "secondary", "site": "site-b", "hana_instance": "00" },
+        { "name": "s4pdb07", "roles": ["db"],   "node_role": "worker",  "ha_role": "secondary", "site": "site-b", "hana_instance": "00" },
+        { "name": "s4pdb08", "roles": ["db"],   "node_role": "standby", "ha_role": "secondary", "site": "site-b", "hana_instance": "00" },
+        { "name": "s4pascs01","roles": ["ascs"],"ha_role": "primary",   "site": "site-a", "ascs_instance": "00" },
+        { "name": "s4pers01", "roles": ["ers"], "ha_role": "secondary", "site": "site-b", "ers_instance": "10" },
+        { "name": "s4papp01", "roles": ["app"], "ha_role": "none", "app_instance": "01" },
+        { "name": "s4papp02", "roles": ["app"], "ha_role": "none", "app_instance": "02" }
+      ]
+    },
+    {
+      "_comment": "8/8 — SCALE-OUT DR (scale-out HA in primary region + async scale-out replica in a 2nd region).",
+      "sid": "S4D",
+      "db_sid": "S4D",
+      "architecture": "scale-out",
+      "deployment": "disaster-recovery",
+      "type": "scaleout-dr",
+      "criticality": "mission-critical",
+      "resource_group": "RG_SAP_S4D",
+      "managed_rg": "mrg-S4D-xxxxx",
+      "region": "centralus",
+      "scale_out": { "db_worker_nodes": 3, "standby_nodes": 1 },
+      "ha": {
+        "enabled": true,
+        "cluster_manager": "pacemaker",
+        "fencing": "sbd",
+        "db_replication": "sync",
+        "sites": ["site-a", "site-b"]
+      },
+      "dr": {
+        "enabled": true,
+        "region": "eastus2",
+        "db_replication": "async",
+        "dr_scale_out": { "db_worker_nodes": 3, "standby_nodes": 0 }
+      },
+      "vms": [
+        { "name": "s4ddb01",  "roles": ["db"],   "node_role": "master",  "ha_role": "primary",   "site": "site-a", "region": "centralus", "hana_instance": "00" },
+        { "name": "s4ddb02",  "roles": ["db"],   "node_role": "worker",  "ha_role": "primary",   "site": "site-a", "region": "centralus", "hana_instance": "00" },
+        { "name": "s4ddb05",  "roles": ["db"],   "node_role": "master",  "ha_role": "secondary", "site": "site-b", "region": "centralus", "hana_instance": "00" },
+        { "name": "s4ddb06",  "roles": ["db"],   "node_role": "worker",  "ha_role": "secondary", "site": "site-b", "region": "centralus", "hana_instance": "00" },
+        { "name": "s4ddbdr01","roles": ["db"],   "node_role": "master",  "ha_role": "dr",        "site": "dr",     "region": "eastus2",   "hana_instance": "00" },
+        { "name": "s4ddbdr02","roles": ["db"],   "node_role": "worker",  "ha_role": "dr",        "site": "dr",     "region": "eastus2",   "hana_instance": "00" },
+        { "name": "s4dascs01","roles": ["ascs"], "ha_role": "primary",   "site": "site-a", "region": "centralus", "ascs_instance": "00" },
+        { "name": "s4ders01", "roles": ["ers"],  "ha_role": "secondary", "site": "site-b", "region": "centralus", "ers_instance": "10" },
+        { "name": "s4dapp01", "roles": ["app"],  "ha_role": "none",      "region": "centralus", "app_instance": "01" },
+        { "name": "s4dappdr01","roles": ["app"], "ha_role": "dr",        "region": "eastus2",   "app_instance": "01" }
       ]
     }
   ]

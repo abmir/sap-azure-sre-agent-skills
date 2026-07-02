@@ -96,7 +96,7 @@ Prometheus_OSExporter_CL
 | summarize latest_cpu=max(node_cpu_seconds_total_d), latest_mem=max(node_memory_MemTotal_bytes_d - node_memory_MemAvailable_bytes_d) by Computer
 ```
 
-### Layer 3: Pacemaker Cluster (AMS — HA systems only)
+### Layer 3: Pacemaker Cluster (AMS — only when `deployment` is high-availability or disaster-recovery; skip for standalone/distributed)
 ```
 Prometheus_HaClusterExporter_CL
 | where TimeGenerated > ago(15m)

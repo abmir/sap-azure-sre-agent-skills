@@ -106,23 +106,26 @@ Response format from Azure:
 
 ```python
 def determine_maintenance_action(vm_name, event_type, landscape):
-    """Determine the correct maintenance sequence based on system type."""
+    """Determine the correct maintenance sequence based on topology (deployment field)."""
     system = find_system_for_vm(vm_name, landscape)
+    deployment = system.get("deployment", "standalone")  # standalone | distributed | high-availability | disaster-recovery
 
-    if system["ha_type"] == "none":
-        # Non-HA: graceful stop, let Azure reboot, auto-start after
+    if deployment in ("standalone", "distributed"):
+        # No cluster: graceful stop, let Azure reboot, auto-start after
         return {
             "pre_actions": ["sap_stop_graceful", "hdb_stop"],
             "post_actions": ["hdb_start", "sap_start"],
             "takeover": False
         }
-    elif system["ha_type"] in ("distributed-ha", "scaleout-ha"):
-        # HA: check if this VM is primary, trigger takeover to secondary
+    elif deployment in ("high-availability", "disaster-recovery"):
+        # HA/DR: if this VM is the HSR/ASCS primary, trigger takeover to the secondary first
+        vm = find_vm(system, vm_name)
+        is_primary = vm.get("ha_role") == "primary"
         return {
             "pre_actions": ["sap_stop_graceful", "hdb_stop"],
             "post_actions": ["hdb_start", "sap_start"],
-            "takeover": True,
-            "takeover_target": system["secondary_vm"]
+            "takeover": is_primary,
+            "takeover_target": next((v["name"] for v in system["vms"] if v.get("ha_role") == "secondary"), None)
         }
 ```
 
