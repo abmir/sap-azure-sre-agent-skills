@@ -29,7 +29,7 @@
 - **Full system inventory:** see the `sap-landscape-inventory.json` knowledge file (summary table below).
 
 ## SAP systems
-List each system with its **topology type** (architecture + deployment). Full per-VM detail (roles, HSR sites, DR region, scale-out worker/standby nodes) lives in the `sap-landscape-inventory.json` knowledge file — the table below is just the routing summary.
+List each system with its **topology type** (architecture + deployment). Full per-VM detail (roles, HSR sites, DR region, scale-out worker/standby nodes) lives in the `sap-landscape-inventory.json` knowledge file — the table below is just the routing summary. You only need a **minimal seed** in that file (SID, resource group, architecture, deployment, criticality); the agent **discovers** VMs, sizes, zones, roles, instances, and AMS provider names at runtime via SAP Landscape Discovery.
 
 | SID | Topology type | Criticality | Resource Group | Primary region | DR region |
 |-----|---------------|-------------|----------------|----------------|-----------|

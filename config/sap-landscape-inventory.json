@@ -1,15 +1,6 @@
 {
-  "_note": "EXAMPLE filled inventory (Abbas AB1 lab). This is a SAMPLE — replace the systems below with your own, or delete this file. The blank template to start from is sap-landscape-inventory.template.json.",
+  "_note": "EXAMPLE filled inventory (Abbas AB1 lab). SAMPLE — replace the systems below with your own, or delete this file. Blank template: sap-landscape-inventory.template.json. Environment-level values (subscription ID, AMS workspace ID, storage account, AMS query notes) live in Team Onboarding, which is always in the agent's context — they are NOT duplicated here. This file holds ONLY the per-system inventory.",
   "environment": "SAP-Lab",
-  "subscription_id": "40050ff9-81f0-4654-9bd4-34551fe455df",
-  "storage_account": "stsreconfigs004",
-  "description": "SAP landscape inventory for Abbas SAP Lab — source of truth for all SRE Agent skills.",
-  "ams": {
-    "workspace_name": "sapmon-laws-eff092fcc1a1f0",
-    "workspace_id": "d337a40e-3213-4e5a-a0e8-c560d537c085",
-    "resource_group": "mrg-sapmon-abb",
-    "kql_notes": "HANA tables use sapsid_s (not SID_s), OS tables use sid_s. Host field is HOST_s. ALWAYS filter by SID/host before aggregation. Run getschema before writing KQL. Memory fields (MEMORY_USED_d, MEMORY_SIZE_d) — check units with getschema before dividing."
-  },
   "systems": [
     {
       "sid": "AB1",
@@ -21,7 +12,7 @@
       "os_type": "SLES_SAP",
       "storage_type": "Premium_LRS",
       "region": "centralus",
-      "ha": { "enabled": false, "cluster_manager": "none" },
+      "ha": { "enabled": false },
       "dr": { "enabled": false },
       "resource_group": "RG_SAP_CUS_AB1",
       "managed_rg": "mrg-AB1-48f3f2",
@@ -32,16 +23,11 @@
       "vms": [
         {
           "name": "AB1vm",
-          "ip": "10.40.3.4",
           "roles": ["db", "ascs", "pas"],
           "ha_role": "none",
-          "sap_sidadm": "ab1adm",
-          "hana_sidadm": "db1adm",
           "hana_instance": "00",
           "ascs_instance": "01",
-          "app_instance": "00",
-          "os_user": "localadmin",
-          "auth_type": "key"
+          "app_instance": "00"
         }
       ]
     }

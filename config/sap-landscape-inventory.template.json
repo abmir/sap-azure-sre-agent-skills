@@ -1,8 +1,7 @@
 {
   "environment": "<environment-name>",
-  "subscription_id": "<subscription-id>",
-  "storage_account": "<config-storage-account-name>",
-  "description": "SAP landscape inventory — source of truth for all SRE Agent skills. Upload this file to the SRE Agent Knowledge Sources after filling in your systems. Delete every _comment / example system and add your own.",
+  "_see_onboarding": "Environment-level values (subscription ID, AMS workspace ID, storage account, AMS query notes) live in Team Onboarding, which is always in the agent's context. Do NOT duplicate them here. This file holds ONLY the per-system inventory. If your systems span multiple subscriptions, add a per-system 'subscription_id'.",
+  "description": "SAP landscape inventory — the per-system source of truth for all SRE Agent skills. Upload to the SRE Agent Knowledge Sources after filling in your systems. Delete every _comment / example system and add your own.",
 
   "how_to_generate": [
     "Option 1: Fill this template manually based on your SAP landscape",
@@ -12,7 +11,10 @@
   ],
 
   "_field_reference": {
-    "_note": "Every system MUST set architecture + deployment. Together they form the canonical topology. The eight examples below (HN1-HN8) show one of each. Copy the one that matches, rename, and fill in your VMs.",
+    "_note": "Give the agent just enough to bootstrap; it discovers the rest at runtime via SAP Landscape Discovery (Azure Resource Graph + ACSS VIS + AMS). Every system MUST set architecture + deployment (the canonical topology). The eight examples below (HN1-HN8) show one of each.",
+    "_required_fields": ["sid", "architecture", "deployment", "criticality", "resource_group"],
+    "_recommended_fields": "db_sid, managed_rg, region, ams_providers, and vms[] with name + roles + ha_role + instance numbers. Cheap to state and make the agent faster and more reliable (fewer discovery calls).",
+    "_agent_discovers": "Everything else — VM sizes, zones, power state, accelerated networking, disk/storage, live cluster/HSR state, provider health — is discovered at runtime. Only pin a value here to override discovery or when the agent cannot infer it (topology intent, criticality, Phase-2 command-proxy auth).",
     "architecture": {
       "scale-up": "HANA DB runs on a SINGLE node (one DB VM per replica). Vertical scaling.",
       "scale-out": "HANA DB is PARTITIONED across a master + N worker nodes (optionally + standby). Horizontal scaling for very large DBs (BW/4HANA, large S/4)."
@@ -32,27 +34,37 @@
       "ha_role": "primary | secondary | dr | none. For DB: HSR primary/secondary and the DR async target = 'dr'. For ASCS/ERS: the ASCS-holding node = primary.",
       "node_role": "SCALE-OUT ONLY. master | worker | standby. Omit for scale-up.",
       "site": "HSR site label (e.g. site-a / site-b) and 'dr' for the DR region set. Omit for standalone/distributed.",
-      "region": "Azure region of this VM. Required for DR systems (primary vs DR region differ)."
+      "region": "Azure region of this VM. Required for DR systems (primary vs DR region differ).",
+      "instances": "hana_instance / ascs_instance / ers_instance / app_instance — 2-digit SAP instance numbers.",
+      "command_proxy_fields": "PHASE 2 ONLY: ip, sap_sidadm, hana_sidadm, os_user, auth_type (key|password) — needed ONLY when the MCP command proxy runs live commands on this VM; omit for read-only Azure telemetry."
+    },
+    "optional_system_fields": {
+      "os_type": "SLES_SAP | REDHAT | OracleLinux | Windows — enables OS-specific config checks.",
+      "storage_type": "Premium_LRS | UltraSSD_LRS | PremiumV2_LRS | ANF | AFS | StandardSSD_LRS — used by resiliency/config checks.",
+      "ams_providers": "Per-system AMS provider instance names, e.g. { hana: sap-hana-pr-<SID>, os: os-linux-pr-<host> } — lets telemetry skills target the right provider."
     },
     "skill_applicability": "HA Cluster Health, Self-Healing (cluster actions) and the Pacemaker layer of Operational Health / Incident Analysis apply ONLY when deployment is 'high-availability' or 'disaster-recovery'. Resiliency Assessment scores DR posture using architecture + deployment + regions. All other skills apply to every topology."
   },
 
   "systems": [
     {
-      "_comment": "1/8 — SCALE-UP STANDALONE (all-in-one, dev/sandbox). Like AB1.",
+      "_comment": "1/8 — SCALE-UP STANDALONE (all-in-one, dev/sandbox). Like AB1. Shows the FULL record for reference — only _required_fields are mandatory; the agent discovers the rest (VMs, roles, instances, ams_providers) via Landscape Discovery.",
       "sid": "HN1",
       "db_sid": "HN1",
       "architecture": "scale-up",
       "deployment": "standalone",
       "type": "scaleup-standalone",
       "criticality": "dev",
+      "os_type": "SLES_SAP",
+      "storage_type": "Premium_LRS",
       "resource_group": "RG_SAP_HN1",
       "managed_rg": "mrg-HN1-xxxxx",
       "region": "eastus2",
       "ha": { "enabled": false },
       "dr": { "enabled": false },
+      "ams_providers": { "hana": "sap-hana-pr-HN1", "os": "os-linux-pr-hn1vm" },
       "vms": [
-        { "name": "hn1vm", "roles": ["db", "ascs", "pas"], "ha_role": "none", "hana_instance": "00", "ascs_instance": "01", "app_instance": "00" }
+        { "name": "hn1vm", "roles": ["db", "ascs", "pas"], "ha_role": "none", "hana_instance": "00", "ascs_instance": "01", "app_instance": "00", "ip": "10.0.0.4", "sap_sidadm": "hn1adm", "hana_sidadm": "hn1adm", "os_user": "localadmin", "auth_type": "key" }
       ]
     },
     {
