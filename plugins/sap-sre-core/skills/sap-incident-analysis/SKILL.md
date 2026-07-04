@@ -120,11 +120,12 @@ Prometheus_HaClusterExporter_CL
 ```
 
 ### Step 4: Layer 4 — HANA Database
+> Run `getschema` first — HANA tables key on `sapsid_s` (not `SID_s`); availability is `SYSTEM_ACTIVE_s` / `DATABASE_ACTIVE_s`.
 ```
 SapHana_SystemAvailability_CL
 | where TimeGenerated > ago(6h)
-| summarize arg_max(TimeGenerated, *) by SID_s, HOST_s
-| project TimeGenerated, SID_s, HOST_s, ACTIVE_STATUS_s
+| summarize arg_max(TimeGenerated, *) by sapsid_s, HOST_s
+| project TimeGenerated, sapsid_s, HOST_s, SYSTEM_ACTIVE_s, DATABASE_ACTIVE_s
 ```
 
 ### Step 5: Change Correlation (conditional)

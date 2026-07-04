@@ -116,9 +116,9 @@ def check_backup_freshness(sid):
     """Check when last successful backup was."""
     query = f"""
     SapHana_BackupCatalog_CL
-    | where SID_s == "{sid}"
+    | where sapsid_s == "{sid}"
     | where STATE_NAME_s == "successful"
-    | summarize LastBackup=max(UTC_END_TIME_t) by SID_s, ENTRY_TYPE_NAME_s
+    | summarize LastBackup=max(UTC_END_TIME_t) by sapsid_s, ENTRY_TYPE_NAME_s
     | order by LastBackup desc
     """
     # Pseudocode — use QueryLogAnalyticsByWorkspaceId tool instead

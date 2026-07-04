@@ -131,7 +131,7 @@ For **scale-up** there is one DB host per SID. For **scale-out**, add `HOST_s` t
 ```
 SapHana_LoadHistory_CL
 | where TimeGenerated > ago(7d)
-| where SID_s == "<SID>"
+| where sapsid_s == "<SID>"
 | summarize avg_mem_pct = avg(MEMORY_USED_d / MEMORY_SIZE_d * 100) by bin(TimeGenerated, 1h), HOST_s
 | order by HOST_s asc, TimeGenerated asc
 ```

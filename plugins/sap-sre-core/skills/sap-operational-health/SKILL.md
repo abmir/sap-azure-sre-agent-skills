@@ -112,19 +112,21 @@ Prometheus_HaClusterExporter_CL
 ```
 
 ### Layer 4: HANA Database (AMS)
+> Run `getschema` first — column names vary by AMS version. HANA tables key on `sapsid_s` (not `SID_s`); availability fields are `SYSTEM_ACTIVE_s` / `DATABASE_ACTIVE_s` / `HOST_ACTIVE_s`.
 ```
 SapHana_SystemAvailability_CL
 | where TimeGenerated > ago(15m)
-| summarize arg_max(TimeGenerated, *) by SID_s, HOST_s
-| project SID_s, HOST_s, ACTIVE_STATUS_s, DATABASE_NAME_s
+| summarize arg_max(TimeGenerated, *) by sapsid_s, HOST_s
+| project sapsid_s, HOST_s, SYSTEM_ACTIVE_s, DATABASE_ACTIVE_s, DATABASE_NAME_s
 ```
 
-### Layer 5: SAP Application (AMS — if available)
+### Layer 5: SAP Application (AMS — only if the NetWeaver provider is configured)
+> Optional provider. If `SapNetweaver_GetProcessList_CL` doesn't exist in the workspace, skip Layer 5 and note the NetWeaver provider isn't configured.
 ```
 SapNetweaver_GetProcessList_CL
 | where TimeGenerated > ago(15m)
-| summarize arg_max(TimeGenerated, *) by SID_s, instanceNr_s, name_s
-| project SID_s, instanceNr_s, name_s, dispstatus_s
+| summarize arg_max(TimeGenerated, *) by sapsid_s, instanceNr_s, name_s
+| project sapsid_s, instanceNr_s, name_s, dispstatus_s
 ```
 
 ## Output Format
