@@ -1,6 +1,6 @@
 ---
 name: sap-cost-analysis
-description: "Analyzes Azure costs for SAP systems. Per-system cost breakdown, RI coverage, deallocated VM savings, rightsizing opportunities, and SRE agent operating cost. No proxy required — uses Azure Cost Management APIs."
+description: "Analyzes Azure costs for SAP systems. Per-system cost breakdown, RI coverage, deallocated VM savings, rightsizing opportunities, and SRE agent operating cost. Prefers Azure Cost Management for actuals; falls back to a retail-pricing estimate when Cost Management is unavailable in the sandbox. No proxy required."
 tools:
     - ExecutePythonCode
     - RunAzCliReadCommands
@@ -49,9 +49,19 @@ from datetime import datetime, timedelta, timezone
 # directly with the agent's own MI. There is NO /api/registry endpoint (proxy is MCP, live commands only).
 ```
 
-## Cost Query — Azure Cost Management
+## Cost data source — try in order, NEVER stall
 
-Use **RunAzCliReadCommands** (NOT ExecutePythonCode) for all cost queries. Example commands:
+The agent sandbox usually does **not** have the Cost Management CLI extension (`az costmanagement`), and the Cost Management REST API may be blocked by policy (e.g. MCAP). Do **not** loop or retry it — fall straight through this chain and **always disclose which method you used** in the report header:
+
+1. **Actual cost (preferred)** — make **one** attempt at `az costmanagement query` / the Cost Management REST API for month-to-date actuals. If the extension is missing or the API returns 401/403/404/"not recognized", abandon it immediately and go to step 2. No retries.
+2. **Retail-price estimate (reliable fallback)** — build the resource inventory from ARM / Azure Resource Graph (VM size, managed-disk SKUs + sizes, snapshots), then price it with the **Azure Retail Prices API** (`https://prices.azure.com/api/retail/prices?$filter=armRegionName eq '<region>' and armSkuName eq '<sku>'`). Compute VM (hourly rate × 730h), each disk by its tier (S6/S10/S15/P10…), and snapshots (~$0.05/GB-month).
+3. **Web-search prices (last resort)** — if the Retail Prices API is network-blocked in the sandbox, web-search current PAYG rates for the VM size and disk tiers in the region.
+
+**Header every estimate with the method**, e.g. *"Cost Management API unavailable — estimate uses Azure Retail Pricing (PAYG, centralus)."* An estimate that is delivered is far more useful than stalling on an unavailable actual-cost API.
+
+## Cost Query — Azure Cost Management (step 1, best-effort only)
+
+Use **RunAzCliReadCommands** (NOT ExecutePythonCode) for the actual-cost attempt. If it fails, drop to the retail-price estimate above. Example commands:
 
 ```bash
 # Per-RG cost breakdown (month to date)
