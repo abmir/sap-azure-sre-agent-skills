@@ -52,6 +52,14 @@ This skill **requires the MCP command proxy** for any remediation action, regist
 | Backup stale >48h | AMS `SapHana_BackupCatalog_CL` or Azure Monitor | Trigger on-demand HANA backup |
 | Sysctl drift after unplanned reboot | Activity Log (VM restart) + Config Guardian | Auto-apply sysctl.d configs |
 
+## Topology handling (all 8 system types)
+
+Read the system's `architecture` + `deployment` before any remediation:
+- **scale-out** → run log-volume / backup remediation on **every** DB node that breaches (iterate master + workers + standby), not just one host.
+- **standalone / distributed** → only the non-cluster actions apply; never attempt cluster/takeover remediation.
+- **high-availability** → safe to act on the local node; keep cluster quorum in mind.
+- **disaster-recovery** → do **NOT** auto-remediate the DR replica; detect async-lag / staleness breaches and **alert a human only**.
+
 ## Authentication
 
 **IMPORTANT — Azure API Access:** Do NOT use IMDS tokens (169.254.169.254) or ManagedIdentityCredential — they are not available in the agent sandbox. Instead:

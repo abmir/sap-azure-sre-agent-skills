@@ -12,6 +12,13 @@ tools:
 - "STAF checks for HSO" / "Run all configuration checks"
 - "Check OS parameters" / "Check HANA configuration"
 
+## Topology handling (all 8 system types)
+
+Derive `HA_TYPE` from `architecture` + `deployment` (see the values block below) and iterate nodes by topology:
+- **scale-out** → validate **every** DB node (master + workers + standby) and compare `sysctl` / `global.ini` **across all worker nodes** — they must be uniform for HSR partitioning; flag any drift.
+- **standalone / distributed** → `HA_TYPE = "false"`; skip the `high_availability` STAF checks.
+- **high-availability / disaster-recovery** → `HA_TYPE = scale_up|scale_out`; run the HA checks. For **disaster-recovery**, also confirm the DR-region nodes have collected configs and validate them too.
+
 ## Infrastructure Requirements
 
 This skill **requires a Storage Account** in the `## Deployed Infrastructure` section of Team Onboarding.

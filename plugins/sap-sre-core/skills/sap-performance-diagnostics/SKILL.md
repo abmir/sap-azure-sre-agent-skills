@@ -46,6 +46,14 @@ This skill adapts automatically based on what infrastructure is listed in the `#
 - "Check dialog response time"
 - "HANA savepoint duration?"
 
+## Topology handling (all 8 system types)
+
+Read the system's `architecture` + `deployment` from the inventory and adapt:
+- **scale-out** → group HANA/OS/storage KQL by `HOST_s` and diagnose each DB node; watch for a single overloaded worker or partition skew rather than a per-SID average.
+- **standalone / distributed** → skip cluster-specific analysis (no Pacemaker) — never error.
+- **high-availability** → sync HSR is expected; treat sync-lag against the HA threshold.
+- **disaster-recovery** → distinguish expected **async** DR-replica lag from a real problem — compare against the async baseline, not the sync HA threshold.
+
 ## Authentication
 
 **IMPORTANT — Azure API Access:** Do NOT use IMDS tokens (169.254.169.254) or ManagedIdentityCredential — they are not available in the agent sandbox. Instead:

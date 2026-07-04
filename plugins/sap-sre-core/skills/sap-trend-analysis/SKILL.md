@@ -42,6 +42,14 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 - "Any anomalies on HSO?"
 - "When will /hana/log fill up?"
 
+## Topology handling (all 8 system types)
+
+Read the system's `architecture` + `deployment` and forecast per node, not per SID:
+- **scale-out** → trend each DB node separately (group by `HOST_s`); forecast per-worker imbalance and standby-node headroom — an aggregate hides a single node filling up.
+- **standalone / distributed** → skip HSR-lag trending (no replication).
+- **high-availability** → trend sync HSR lag against the HA baseline.
+- **disaster-recovery** → trend the **async** DR replica lag against its own (looser) baseline, separately from any sync HA lag.
+
 ## Authentication
 
 **IMPORTANT — Azure API Access:** Do NOT use IMDS tokens (169.254.169.254) or ManagedIdentityCredential — they are not available in the agent sandbox. Instead:
@@ -118,12 +126,14 @@ def project_crossover(regression, threshold, current_time_epoch):
 
 ## HANA Memory Trend Query
 
+For **scale-up** there is one DB host per SID. For **scale-out**, add `HOST_s` to the grouping so each master/worker node is trended separately — never average across nodes (a hot worker gets hidden by the aggregate):
+
 ```
 SapHana_LoadHistory_CL
 | where TimeGenerated > ago(7d)
 | where SID_s == "<SID>"
-| summarize avg_mem_pct = avg(MEMORY_USED_d / MEMORY_SIZE_d * 100) by bin(TimeGenerated, 1h)
-| order by TimeGenerated asc
+| summarize avg_mem_pct = avg(MEMORY_USED_d / MEMORY_SIZE_d * 100) by bin(TimeGenerated, 1h), HOST_s
+| order by HOST_s asc, TimeGenerated asc
 ```
 
 ## Action Recommendations

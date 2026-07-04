@@ -46,6 +46,14 @@ This skill adapts automatically based on what infrastructure is listed in the `#
 - "Give me a root-cause timeline"
 - **Auto-triggered** by Azure Monitor alert response plans
 
+## Topology handling (all 8 system types)
+
+Read the system's `architecture` + `deployment` from the inventory and scope the layers accordingly — never assume AB1's single-VM shape:
+- **scale-out** → group Layer-2 / Layer-4 KQL by `HOST_s` and reconstruct the timeline per DB node (master/workers/standby); a single hot or failed worker is the root cause you must surface, not an aggregate.
+- **standalone / distributed** → skip Layer 3 (Pacemaker) entirely (no cluster) — note it as N/A, don't error.
+- **high-availability** → run Layer 3 and correlate fencing / takeover events.
+- **disaster-recovery** → also evaluate async HSR replica lag and whether the DR region/replica was part of the incident window.
+
 ## Core Principle: Bottom-Up Analysis
 
 If Layer 1 (Azure Infrastructure) is RED, that's the root cause — upper layers are collateral damage. Always find the **deepest** infrastructure failure and explain the cascade upward.

@@ -30,6 +30,14 @@ All environment-specific values (subscription ID, AMS workspace ID, proxy URLs, 
 - "Are there network issues between DB and App servers?"
 - "Check if AB1 VMs have accelerated networking"
 
+## Topology handling (all 8 system types)
+
+Read the target system's `architecture` (`scale-up`|`scale-out`) and `deployment` (`standalone`|`distributed`|`high-availability`|`disaster-recovery`) from the inventory and adapt — never assume AB1's single-VM shape:
+- **scale-out** → the HANA DB spans master + worker (+ standby) nodes. Group every HANA/OS KQL by `HOST_s` and report each DB node's L2/L4 health individually; flag worker imbalance and standby readiness. `scale-up` = one active DB node per replica.
+- **standalone / distributed** → no Pacemaker/HSR — set **L3 Cluster = ⚪ N/A** and skip the Pacemaker query (never error).
+- **high-availability** → run the L3 Pacemaker + HSR checks.
+- **disaster-recovery** → also show the cross-region DR replica (`ha_role: dr`, `dr.region`) as a separate health line with its async HSR status; don't fold it into the primary site.
+
 ## Data Sources
 
 | Source | Primary/Fallback | Freshness | What It Provides |

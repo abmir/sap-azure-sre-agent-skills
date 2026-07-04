@@ -102,6 +102,14 @@ Response format from Azure:
 }
 ```
 
+## Topology handling (all 8 system types)
+
+The action plan keys off `deployment` (see Step 2) and must also respect `architecture`:
+- **standalone / distributed** → graceful stop → reboot → auto-start (no takeover).
+- **high-availability / disaster-recovery** → if the VM is the HSR/ASCS **primary**, take over to the secondary first, then maintain.
+- **scale-out** → coordinate **node-by-node** (drain/maintain one worker at a time, preserve quorum and the standby); never take multiple DB nodes down together.
+- **disaster-recovery** → confirm the async DR replica is caught up before touching the primary site.
+
 ## Step 2: Determine System Type and Action
 
 ```python
@@ -131,7 +139,7 @@ def determine_maintenance_action(vm_name, event_type, landscape):
 
 ## Step 3: Execute Graceful Shutdown
 
-For non-HA (AB1, AB3):
+For standalone / distributed (no cluster):
 1. Stop SAP: Invoke Command Runner with command_id=`sap_stop_graceful`, sidadm=`ab1adm`, sid=`AB1`
 2. Stop HANA: Invoke Command Runner with command_id=`hdb_stop`, sidadm=`db1adm`
 3. Acknowledge event to Azure (starts countdown)
@@ -140,7 +148,7 @@ For non-HA (AB1, AB3):
 6. Start SAP: Invoke Command Runner with command_id=`sap_start`, sidadm=`ab1adm`, sid=`AB1`
 7. Validate: check process list, HANA availability
 
-For HA (HSO):
+For high-availability / disaster-recovery (clustered) — for scale-out, repeat per DB node preserving quorum:
 1. Verify HSR is in sync (query AMS)
 2. Set maintenance mode: Invoke Command Runner with command_id=`crm_maintenance_on`
 3. Stop SAP on target node
