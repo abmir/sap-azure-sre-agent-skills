@@ -53,7 +53,7 @@ from datetime import datetime, timedelta, timezone
 
 The agent sandbox usually does **not** have the Cost Management CLI extension (`az costmanagement`), and the Cost Management REST API may be blocked by policy (e.g. MCAP). Do **not** loop or retry it — fall straight through this chain and **always disclose which method you used** in the report header:
 
-1. **Actual cost (preferred)** — make **one** attempt at `az costmanagement query` / the Cost Management REST API for month-to-date actuals. If the extension is missing or the API returns 401/403/404/"not recognized", abandon it immediately and go to step 2. No retries.
+1. **Actual cost (preferred) — lead with the REST API, not the CLI.** Make **one** attempt at the Cost Management REST API via **`GetArmResourceAsJson`** (built-in, needs no extension — see body below) for month-to-date actuals. Do **not** start with `az costmanagement` (the CLI extension is frequently absent in the sandbox and wastes a turn discovering that). If the REST call returns 401/403/404, abandon immediately and go to step 2. No retries.
 2. **Retail-price estimate (reliable fallback)** — build the resource inventory from ARM / Azure Resource Graph (VM size, managed-disk SKUs + sizes, snapshots), then price it with the **Azure Retail Prices API** (`https://prices.azure.com/api/retail/prices?$filter=armRegionName eq '<region>' and armSkuName eq '<sku>'`). Compute VM (hourly rate × 730h), each disk by its tier (S6/S10/S15/P10…), and snapshots (~$0.05/GB-month).
 3. **Web-search prices (last resort)** — if the Retail Prices API is network-blocked in the sandbox, web-search current PAYG rates for the VM size and disk tiers in the region.
 
@@ -61,20 +61,17 @@ The agent sandbox usually does **not** have the Cost Management CLI extension (`
 
 ## Cost Query — Azure Cost Management (step 1, best-effort only)
 
-Use **RunAzCliReadCommands** (NOT ExecutePythonCode) for the actual-cost attempt. If it fails, drop to the retail-price estimate above. Example commands:
-
-```bash
-# Per-RG cost breakdown (month to date)
-az cost management query --type ActualCost --timeframe MonthToDate --scope "subscriptions/{SUB_ID}" --query "[].{rg:ResourceGroup, cost:Cost}" -o table
-
-# Cost for specific SAP resource groups
-az costmanagement query --type ActualCost --timeframe MonthToDate --dataset-grouping name=ResourceGroup type=Dimension --dataset-filter "{\"dimensions\":{\"name\":\"ResourceGroup\",\"operator\":\"In\",\"values\":[\"RG_SAP_CUS_AB1\",\"mrg-AB1-48f3f2\"]}}" --scope "subscriptions/{SUB_ID}" -o json
-```
-
-If `az costmanagement` is unavailable, use **GetArmResourceAsJson** with the Cost Management REST API:
+**Primary attempt — REST API via `GetArmResourceAsJson`** (no CLI extension required, works in customer tenants and the sandbox):
 - URL: `/subscriptions/{SUB_ID}/providers/Microsoft.CostManagement/query?api-version=2023-03-01`
 - Method: POST
 - Body: `{"type":"ActualCost","timeframe":"MonthToDate","dataset":{"granularity":"Daily","aggregation":{"totalCost":{"name":"Cost","function":"Sum"}},"grouping":[{"type":"Dimension","name":"ResourceGroup"}]}}`
+
+Only if the REST API is unavailable AND the CLI extension is known to be present, you may try `az costmanagement query` via **RunAzCliReadCommands** (one attempt, no retries) — otherwise skip straight to the retail-price estimate:
+
+```bash
+# One-shot only; skip entirely if the extension isn't installed
+az costmanagement query --type ActualCost --timeframe MonthToDate --dataset-grouping name=ResourceGroup type=Dimension --dataset-filter "{\"dimensions\":{\"name\":\"ResourceGroup\",\"operator\":\"In\",\"values\":[\"<RG1>\",\"<RG2>\"]}}" --scope "subscriptions/{SUB_ID}" -o json
+```
 
 ## Azure Advisor Cost Recommendations
 

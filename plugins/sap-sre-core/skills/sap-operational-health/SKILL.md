@@ -98,6 +98,7 @@ HEALTH_COMMANDS = [
 | Resource Health | Resource Health API | Available | Degraded | Unavailable |
 
 ### Layer 2: Guest OS (AMS)
+> Run `Prometheus_OSExporter_CL | getschema` FIRST — the node_exporter column names below are a template and vary by AMS collector version; bind to the real columns before running.
 ```
 Prometheus_OSExporter_CL
 | where TimeGenerated > ago(15m)
@@ -105,6 +106,7 @@ Prometheus_OSExporter_CL
 ```
 
 ### Layer 3: Pacemaker Cluster (AMS — only when `deployment` is high-availability or disaster-recovery; skip for standalone/distributed)
+> Run `Prometheus_HaClusterExporter_CL | getschema` FIRST — the `ha_cluster_*` column names below are a template and vary by AMS collector version; bind to the real columns before running.
 ```
 Prometheus_HaClusterExporter_CL
 | where TimeGenerated > ago(15m)

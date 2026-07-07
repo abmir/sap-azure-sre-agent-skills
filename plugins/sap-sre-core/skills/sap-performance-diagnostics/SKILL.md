@@ -126,6 +126,8 @@ PERF_COMMANDS = [
 
 ## Query Optimization
 
+> **Run `getschema` FIRST (mandatory) on every `SapHana_*_CL` table you use** (`SapHana_LoadHistory_CL`, `SapHana_SqlProbe_CL`, `SapHana_SystemAvailability_CL`, `SapHana_Alerts_CL`, `SapHana_Mvcc_CL`, `SapHana_IO_Savepoint_CL`). **The column names in the templates below are illustrative and differ by AMS collector version** — e.g. host CPU/memory may be `CPU_d` / `MEMORY_RESIDENT_d` (not `host_cpu_d` / `host_memory_resident_d`), and SQL latency may be `LATENCY_MS_d` (not `latency_d`). Bind every field to the real name returned by getschema before running the analytic query; never carry column names over from memory or another table.
+
 **Batch HANA checks into a single KQL query** to minimize AAU consumption and latency. Instead of running separate queries for CPU, memory, SQL probe, availability, and alerts, combine them:
 
 ```kql

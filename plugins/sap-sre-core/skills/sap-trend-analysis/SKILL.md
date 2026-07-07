@@ -128,6 +128,8 @@ def project_crossover(regression, threshold, current_time_epoch):
 
 For **scale-up** there is one DB host per SID. For **scale-out**, add `HOST_s` to the grouping so each master/worker node is trended separately — never average across nodes (a hot worker gets hidden by the aggregate):
 
+> **Run `getschema` FIRST (mandatory):** `SapHana_LoadHistory_CL | getschema` (and any other `SapHana_*_CL` / `Prometheus_*_CL` table you trend). Memory/CPU column names vary by AMS collector version — the `MEMORY_USED_d` / `MEMORY_SIZE_d` fields below are a **template**; confirm the real names before running. Also state the **actual data window available** (a newly onboarded or recently started system may have only a short history) and don't extrapolate a trend from too few points.
+
 ```
 SapHana_LoadHistory_CL
 | where TimeGenerated > ago(7d)

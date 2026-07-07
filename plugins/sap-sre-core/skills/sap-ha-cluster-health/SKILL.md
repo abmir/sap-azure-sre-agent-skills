@@ -100,6 +100,8 @@ HA_COMMANDS = [
 
 ## T1 Mode: Cluster + HSR Status
 
+> **Run `getschema` FIRST (mandatory).** Before the queries below, run `Prometheus_HaClusterExporter_CL | getschema` and `SapHana_SystemReplication_CL | getschema`. The `ha_cluster_*` and HSR column names/suffixes vary by AMS collector version — the KQL below is a **template**; bind it to the real column names from getschema, never assume them from memory or another table.
+
 ### Pacemaker Checks
 ```
 Prometheus_HaClusterExporter_CL
